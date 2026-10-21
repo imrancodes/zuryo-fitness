@@ -1,4 +1,4 @@
-import { Activity } from "lucide-react";
+import { Dumbbell } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -23,7 +23,7 @@ export function Brand({ href = "/", inverted = false, className }: BrandProps) {
           inverted ? "bg-brand text-brand-foreground" : "bg-primary text-primary-foreground"
         )}
       >
-        <Activity className="size-4" aria-hidden />
+        <Dumbbell className="size-4 -rotate-45" aria-hidden />
       </span>
       Zuryo
     </Link>

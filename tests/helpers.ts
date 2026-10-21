@@ -1,7 +1,9 @@
 import { NextRequest } from "next/server";
 import { connectToDatabase } from "@/lib/mongodb";
 import type { Role } from "@/lib/roles";
-import { SESSION_COOKIE } from "@/lib/session";
+import { SESSION_COOKIE, signSession } from "@/lib/session";
+import type { ServiceZone } from "@/lib/zones";
+import { TrainerAvailability } from "@/models/TrainerAvailability";
 import { hashPassword } from "@/services/auth.service";
 import { User } from "@/models/User";
 
@@ -26,8 +28,30 @@ export function sessionFrom(response: Response) {
   return match?.[1] ?? "";
 }
 
+export function routeContext<T extends Record<string, string>>(params: T) {
+  return { params: Promise.resolve(params) };
+}
+
 export async function createUser(role: Role, email = `${role}-${crypto.randomUUID()}@test.dev`) {
   await connectToDatabase();
   await User.create({ name: `Test ${role}`, email, passwordHash: await hashPassword(PASSWORD), role });
   return email;
+}
+
+export async function createAccount(role: Role) {
+  await connectToDatabase();
+  const user = await User.create({
+    name: `Test ${role} ${crypto.randomUUID().slice(0, 4)}`,
+    email: `${role}-${crypto.randomUUID()}@test.dev`,
+    passwordHash: "not-used",
+    role,
+  });
+  const id = user._id.toString();
+  return { id, session: await signSession({ userId: id, role }) };
+}
+
+export async function addWindow(trainerId: string, serviceZone: ServiceZone, startTime: Date, endTime: Date) {
+  const date = new Date(startTime);
+  date.setUTCHours(0, 0, 0, 0);
+  await TrainerAvailability.create({ trainerId, date, startTime, endTime, serviceZone });
 }

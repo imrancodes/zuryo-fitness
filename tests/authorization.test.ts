@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { GET as adminUsers } from "@/app/api/admin/users/route";
 import { POST as login } from "@/app/api/auth/login/route";
-import { GET as trainerAvailability } from "@/app/api/trainer/availability/route";
+import { GET as trainerAvailability } from "@/app/api/trainers/me/availability/route";
 import type { Role } from "@/lib/roles";
 import { signSession } from "@/lib/session";
 import { PASSWORD, createUser, makeRequest, sessionFrom } from "./helpers";
@@ -16,7 +16,7 @@ beforeAll(async () => {
 });
 
 const callAdmin = (session?: string) => adminUsers(makeRequest("/api/admin/users", { session }));
-const callTrainer = (session?: string) => trainerAvailability(makeRequest("/api/trainer/availability", { session }));
+const callTrainer = (session?: string) => trainerAvailability(makeRequest("/api/trainers/me/availability", { session }));
 
 describe("protected APIs", () => {
   test("reject unauthenticated requests", async () => {

@@ -1,4 +1,5 @@
 import { Schema, model, models, type InferSchemaType, type Model } from "mongoose";
+import { SERVICE_ZONES } from "@/lib/zones";
 
 const trainerAvailabilitySchema = new Schema(
   {
@@ -15,7 +16,7 @@ const trainerAvailabilitySchema = new Schema(
         message: "endTime must be after startTime",
       },
     },
-    serviceZone: { type: String, required: true, trim: true },
+    serviceZone: { type: String, enum: SERVICE_ZONES, required: true },
     isAvailable: { type: Boolean, default: true },
   },
   { timestamps: true }

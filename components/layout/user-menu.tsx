@@ -3,6 +3,7 @@
 import { LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { InitialsAvatar } from "@/components/initials-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,21 +16,19 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { useResetOnHide } from "@/hooks/use-reset-on-hide";
 import { ROLE_LABEL } from "@/lib/roles";
 import type { PublicUser } from "@/types/user";
 
-function initials(name: string) {
-  return name
-    .split(" ")
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
-
 export function UserMenu({ user }: { user: PublicUser }) {
   const router = useRouter();
+  const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
+
+  useResetOnHide(() => {
+    setOpen(false);
+    setPending(false);
+  });
 
   async function signOut() {
     setPending(true);
@@ -44,16 +43,11 @@ export function UserMenu({ user }: { user: PublicUser }) {
         <p className="text-sm font-medium leading-tight">{user.name}</p>
         <p className="text-xs text-muted-foreground">{user.email}</p>
       </div>
-      <span
-        aria-hidden
-        className="grid size-9 place-items-center rounded-full bg-secondary text-sm font-semibold text-primary"
-      >
-        {initials(user.name)}
-      </span>
+      <InitialsAvatar name={user.name} />
       <Badge variant="brand" className="hidden md:inline-flex">
         {ROLE_LABEL[user.role]}
       </Badge>
-      <Dialog>
+      <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger render={<Button variant="ghost" size="icon" aria-label="Sign out" />}>
           <LogOut />
         </DialogTrigger>

@@ -1,7 +1,7 @@
 import { Suspense, type ReactNode } from "react";
 import { Brand } from "@/components/brand";
 import { MobileNav } from "@/components/layout/mobile-nav";
-import { SidebarNav } from "@/components/layout/sidebar-nav";
+import { NavList, SidebarNav } from "@/components/layout/sidebar-nav";
 import { UserMenu } from "@/components/layout/user-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { requireRole } from "@/lib/auth";
@@ -43,7 +43,9 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
       <div className="flex">
         <aside className="hidden w-64 shrink-0 border-r bg-card lg:block">
           <div className="sticky top-16 p-4">
-            <SidebarNav role={role} />
+            <Suspense fallback={<NavList role={role} pathname={null} />}>
+              <SidebarNav role={role} />
+            </Suspense>
           </div>
         </aside>
         <main className="min-w-0 flex-1">

@@ -1,12 +1,13 @@
 "use client";
 
-import { ArrowRight, Dumbbell, Loader2, ShieldCheck, UserRound, type LucideIcon } from "lucide-react";
+import { ArrowRight, BicepsFlexed, Loader2, ShieldCheck, UserRound, type LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { FormStatus } from "@/features/auth/form-status";
+import { FormStatus } from "@/components/form-status";
 import { postAuth } from "@/features/auth/post-auth";
+import { useResetOnHide } from "@/hooks/use-reset-on-hide";
 import type { Role } from "@/lib/roles";
 
 const DEMO_ROLES: { role: Role; title: string; description: string; icon: LucideIcon }[] = [
@@ -20,7 +21,7 @@ const DEMO_ROLES: { role: Role; title: string; description: string; icon: Lucide
     role: "trainer",
     title: "Trainer",
     description: "Manage your availability and service zones, run sessions and log workouts for clients.",
-    icon: Dumbbell,
+    icon: BicepsFlexed,
   },
   {
     role: "admin",
@@ -34,6 +35,11 @@ export function DemoRoleCards() {
   const router = useRouter();
   const [pendingRole, setPendingRole] = useState<Role | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useResetOnHide(() => {
+    setPendingRole(null);
+    setError(null);
+  });
 
   async function enter(role: Role) {
     setPendingRole(role);

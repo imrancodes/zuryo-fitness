@@ -1,22 +1,8 @@
-export type FieldErrors = Partial<Record<string, string[]>>;
+import { requestJson, type FieldErrors } from "@/lib/request";
 
-export type AuthResult =
-  | { ok: true; redirectTo: string }
-  | { ok: false; error: string; fieldErrors?: FieldErrors };
+export type AuthResult = { ok: true; redirectTo: string } | { ok: false; error: string; fieldErrors?: FieldErrors };
 
 export async function postAuth(url: string, body: unknown): Promise<AuthResult> {
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await response.json();
-
-    return response.ok
-      ? { ok: true, redirectTo: data.redirectTo }
-      : { ok: false, error: data.error, fieldErrors: data.fieldErrors };
-  } catch {
-    return { ok: false, error: "Something went wrong. Check your connection and try again." };
-  }
+  const result = await requestJson<{ redirectTo: string }>(url, { method: "POST", body });
+  return result.ok ? { ok: true, redirectTo: result.data.redirectTo } : result;
 }

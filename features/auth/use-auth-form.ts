@@ -1,17 +1,27 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { z } from "zod";
-import { postAuth, type FieldErrors } from "@/features/auth/post-auth";
+import { postAuth } from "@/features/auth/post-auth";
+import type { FieldErrors } from "@/lib/request";
+import { useResetOnHide } from "@/hooks/use-reset-on-hide";
 
 type Status = "idle" | "pending" | "success";
 
 export function useAuthForm(url: string, schema: z.ZodType, extraValues?: () => Record<string, unknown>) {
   const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+
+  useResetOnHide(() => {
+    formRef.current?.reset();
+    setStatus("idle");
+    setError(null);
+    setFieldErrors({});
+  });
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -46,5 +56,5 @@ export function useAuthForm(url: string, schema: z.ZodType, extraValues?: () => 
     setFieldErrors((current) => (current[name] ? { ...current, [name]: undefined } : current));
   }
 
-  return { status, error, fieldErrors, onSubmit, onChange };
+  return { formRef, status, error, fieldErrors, onSubmit, onChange };
 }

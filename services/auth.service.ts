@@ -1,6 +1,7 @@
 import "server-only";
 import bcrypt from "bcryptjs";
 import { isValidObjectId, type Types } from "mongoose";
+import { isDuplicateKeyError, ServiceError } from "@/lib/errors";
 import { connectToDatabase } from "@/lib/mongodb";
 import type { Role } from "@/lib/roles";
 import { User } from "@/models/User";
@@ -9,12 +10,6 @@ import type { RegisterInput } from "@/validators/auth";
 
 const HASH_ROUNDS = 10;
 const TIMING_GUARD_HASH = bcrypt.hashSync("zuryo-timing-guard", HASH_ROUNDS);
-
-export class EmailTakenError extends Error {
-  constructor() {
-    super("An account with this email already exists");
-  }
-}
 
 type UserLike = {
   _id: Types.ObjectId;
@@ -51,8 +46,8 @@ export async function registerUser(input: RegisterInput) {
     });
     return toPublicUser(user);
   } catch (error) {
-    if ((error as { code?: number }).code === 11000) {
-      throw new EmailTakenError();
+    if (isDuplicateKeyError(error)) {
+      throw new ServiceError(409, "An account with this email already exists");
     }
     throw error;
   }

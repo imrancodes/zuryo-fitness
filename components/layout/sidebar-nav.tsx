@@ -4,19 +4,24 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { NAV_ITEMS } from "@/lib/navigation";
-import type { Role } from "@/lib/roles";
+import { ROLE_HOME, type Role } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
 const itemClass = "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors";
 
-export function SidebarNav({ role, onNavigate }: { role: Role; onNavigate?: () => void }) {
-  const pathname = usePathname();
+type NavListProps = {
+  role: Role;
+  pathname: string | null;
+  onNavigate?: () => void;
+};
 
+export function NavList({ role, pathname, onNavigate }: NavListProps) {
   return (
     <nav aria-label="Main">
       <ul className="space-y-1">
         {NAV_ITEMS[role].map(({ label, href, icon: Icon, soon }) => {
-          const active = pathname === href;
+          const active =
+            pathname !== null && (pathname === href || (href !== ROLE_HOME[role] && pathname.startsWith(`${href}/`)));
 
           return (
             <li key={href}>
@@ -49,4 +54,8 @@ export function SidebarNav({ role, onNavigate }: { role: Role; onNavigate?: () =
       </ul>
     </nav>
   );
+}
+
+export function SidebarNav({ role, onNavigate }: { role: Role; onNavigate?: () => void }) {
+  return <NavList role={role} pathname={usePathname()} onNavigate={onNavigate} />;
 }

@@ -9,6 +9,8 @@ const userSchema = new Schema(
     role: { type: String, enum: ROLES, required: true, default: "customer" },
     avatarUrl: { type: String, default: null },
     isActive: { type: Boolean, default: true },
+    specialties: { type: [String], default: [] },
+    scheduleVersion: { type: Number, default: 0 },
   },
   {
     timestamps: true,

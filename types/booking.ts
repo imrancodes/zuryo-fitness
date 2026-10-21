@@ -1,4 +1,5 @@
 import type { BookingMode, BookingStatus, PaymentStatus } from "@/lib/booking";
+import type { SessionStatus } from "@/lib/session-timer";
 import type { ServiceZone } from "@/lib/zones";
 
 export type TrainerSummary = {
@@ -21,6 +22,7 @@ export type BookingView = {
   id: string;
   mode: BookingMode;
   status: BookingStatus;
+  sessionStatus: SessionStatus;
   startTime: string;
   endTime: string;
   serviceZone: ServiceZone;

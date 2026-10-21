@@ -22,7 +22,7 @@ export default async function MyBookingsPage() {
         breadcrumbs={[{ label: "Customer", href: "/customer" }, { label: "My bookings" }]}
       />
       {bookings.length > 0 ? (
-        <BookingList bookings={bookings} perspective="customer" hrefFor={(id) => `/customer/bookings/${id}`} />
+        <BookingList bookings={bookings} />
       ) : (
         <EmptyState icon={CalendarCheck} title="No bookings yet" description="Your booked sessions will appear here.">
           <Button nativeButton={false} render={<Link href="/customer/book" />}>

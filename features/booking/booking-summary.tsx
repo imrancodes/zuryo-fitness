@@ -6,7 +6,7 @@ type BookingSummaryProps = {
   mode: BookingMode;
   startTime: string;
   serviceZone: string;
-  trainer: ReactNode;
+  trainer?: ReactNode;
   extra?: { label: string; value: ReactNode }[];
 };
 
@@ -19,7 +19,7 @@ export function BookingSummary({ mode, startTime, serviceZone, trainer, extra = 
     { label: "Time", value: `${formatTime(startTime)} – ${formatTime(endTime)} ${TIME_ZONE_LABEL}` },
     { label: "Duration", value: `${SESSION_MINUTES} minutes` },
     { label: "Service zone", value: serviceZone },
-    { label: "Trainer", value: trainer },
+    ...(trainer === undefined ? [] : [{ label: "Trainer", value: trainer }]),
   ];
 
   return (

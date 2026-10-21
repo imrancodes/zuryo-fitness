@@ -31,7 +31,7 @@ export const NAV_ITEMS: Record<Role, NavItem[]> = {
   trainer: [
     { label: "Overview", href: "/trainer", icon: LayoutDashboard },
     { label: "Availability", href: "/trainer/availability", icon: CalendarClock },
-    { label: "Session logs", href: "/trainer/sessions", icon: BicepsFlexed, soon: true },
+    { label: "Sessions", href: "/trainer/sessions", icon: BicepsFlexed },
   ],
   admin: [
     { label: "Overview", href: "/admin", icon: LayoutDashboard },

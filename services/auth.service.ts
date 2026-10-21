@@ -81,6 +81,13 @@ export async function getActiveUserByEmail(email: string) {
   return user ? toPublicUser(user) : null;
 }
 
+export async function namesById(ids: (Types.ObjectId | string | null | undefined)[]) {
+  await connectToDatabase();
+  const users = await User.find({ _id: { $in: ids.filter(Boolean) } }, "name").lean();
+  const names = new Map(users.map((user) => [user._id.toString(), user.name]));
+  return (id: Types.ObjectId | string) => ({ id: id.toString(), name: names.get(id.toString()) ?? "Unknown" });
+}
+
 export async function listUsers() {
   await connectToDatabase();
   const users = await User.find().sort({ createdAt: -1 }).limit(100);

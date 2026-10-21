@@ -1,5 +1,5 @@
 import "server-only";
-import { isValidObjectId, type ClientSession, type Types } from "mongoose";
+import { isValidObjectId, type ClientSession } from "mongoose";
 import {
   ACTIVE_BOOKING_STATUSES,
   SESSION_MINUTES,
@@ -13,8 +13,9 @@ import { connectToDatabase } from "@/lib/mongodb";
 import { addMinutes } from "@/lib/time";
 import type { ServiceZone } from "@/lib/zones";
 import { Booking, type BookingRecord } from "@/models/Booking";
-import { User } from "@/models/User";
+import { namesById } from "@/services/auth.service";
 import { openSlotsByTrainer } from "@/services/availability.service";
+import { sessionStatusesFor } from "@/services/session.service";
 import { withTrainerLock } from "@/services/schedule-lock";
 import type { BookingView } from "@/types/booking";
 import type { PublicUser } from "@/types/user";
@@ -25,23 +26,27 @@ const PREFERRED_UNAVAILABLE = "Your preferred trainer isn't available at this ti
 const NO_TRAINERS = "No trainers are available at this time in this zone. Choose another time.";
 
 async function toBookingViews(bookings: BookingRecord[]): Promise<BookingView[]> {
-  const userIds = bookings.flatMap((booking) => [booking.customerId, booking.trainerId].filter(Boolean));
-  const users = await User.find({ _id: { $in: userIds } }, "name").lean();
-  const nameOf = new Map(users.map((user) => [user._id.toString(), user.name]));
-  const person = (id: Types.ObjectId) => ({ id: id.toString(), name: nameOf.get(id.toString()) ?? "Unknown" });
+  const [person, sessionStatuses] = await Promise.all([
+    namesById(bookings.flatMap((booking) => [booking.customerId, booking.trainerId])),
+    sessionStatusesFor(bookings),
+  ]);
 
-  return bookings.map((booking) => ({
-    id: booking._id.toString(),
-    mode: booking.bookingType as BookingMode,
-    status: booking.status as BookingStatus,
-    startTime: booking.startTime.toISOString(),
-    endTime: booking.endTime.toISOString(),
-    serviceZone: booking.serviceZone as ServiceZone,
-    trainer: booking.trainerId ? person(booking.trainerId) : null,
-    customer: person(booking.customerId),
-    paymentStatus: (booking.paymentStatus ?? "unpaid") as PaymentStatus,
-    createdAt: (booking.createdAt ?? new Date()).toISOString(),
-  }));
+  return bookings.map((booking) => {
+    const sessionStatus = sessionStatuses.get(booking._id.toString()) ?? "scheduled";
+    return {
+      id: booking._id.toString(),
+      mode: booking.bookingType as BookingMode,
+      status: (sessionStatus === "completed" ? "completed" : booking.status) as BookingStatus,
+      sessionStatus,
+      startTime: booking.startTime.toISOString(),
+      endTime: booking.endTime.toISOString(),
+      serviceZone: booking.serviceZone as ServiceZone,
+      trainer: booking.trainerId ? person(booking.trainerId) : null,
+      customer: person(booking.customerId),
+      paymentStatus: (booking.paymentStatus ?? "unpaid") as PaymentStatus,
+      createdAt: (booking.createdAt ?? new Date()).toISOString(),
+    };
+  });
 }
 
 async function toBookingView(booking: BookingRecord) {

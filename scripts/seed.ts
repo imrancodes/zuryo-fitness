@@ -2,16 +2,19 @@ import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
 import { DEMO_ACCOUNTS } from "@/lib/demo";
 import { formatInr } from "@/lib/money";
-import { DEFAULT_PRICING, quoteForPrice } from "@/lib/pricing";
-import { addDays, todayInZone, zonedToUtc } from "@/lib/time";
+import { calculateQuote, DEFAULT_PRICING, quoteForPrice } from "@/lib/pricing";
+import { addDays, addMinutes, todayInZone, zonedToUtc } from "@/lib/time";
 import type { ServiceZone } from "@/lib/zones";
 import { Booking } from "@/models/Booking";
+import { Payment } from "@/models/Payment";
 import { PricingRule } from "@/models/PricingRule";
+import { SessionRecord } from "@/models/SessionRecord";
 import { TrainerAvailability } from "@/models/TrainerAvailability";
 import { User } from "@/models/User";
 
 const DEFAULT_DEMO_PASSWORD = "ZuryoDemo123!";
 const SEED_DAYS = 8;
+const HISTORY_BOOKING_KEY = "seed-history-session";
 
 const TRAINERS: { name: string; email: string; specialties: string[]; zones: [ServiceZone, ServiceZone] }[] = [
   { ...DEMO_ACCOUNTS.trainer, specialties: ["Strength", "Mobility"], zones: ["Indiranagar", "Koramangala"] },
@@ -49,6 +52,72 @@ function buildAvailability(trainerId: mongoose.Types.ObjectId, zones: [ServiceZo
   );
 }
 
+async function seedCompletedSession() {
+  const customer = await User.findOne({ email: DEMO_ACCOUNTS.customer.email }).orFail();
+  const trainer = await User.findOne({ email: DEMO_ACCOUNTS.trainer.email }).orFail();
+  const rule = await PricingRule.findOne({ name: "Standard" }).orFail();
+  const startTime = zonedToUtc(addDays(todayInZone(), -1), "10:00");
+  const endTime = addMinutes(startTime, 60);
+  const quote = calculateQuote(DEFAULT_PRICING, startTime);
+
+  const booking = await Booking.findOneAndUpdate(
+    { customerId: customer._id, idempotencyKey: HISTORY_BOOKING_KEY },
+    {
+      $set: {
+        trainerId: trainer._id,
+        startTime,
+        endTime,
+        bookingType: "scheduled",
+        status: "completed",
+        serviceZone: "Indiranagar",
+        paymentStatus: "paid",
+        sessionPrice: quote.sessionPrice,
+        commissionAmount: quote.commissionAmount,
+        totalAmount: quote.totalAmount,
+      },
+    },
+    { upsert: true, new: true }
+  ).orFail();
+
+  await Payment.updateOne(
+    { bookingId: booking._id, status: "paid" },
+    {
+      $set: {
+        customerId: customer._id,
+        ...quote,
+        pricingRuleId: rule._id,
+        expiresAt: startTime,
+        providerReference: "sim_seed_history",
+        paidAt: addMinutes(startTime, -120),
+      },
+    },
+    { upsert: true }
+  );
+
+  await SessionRecord.updateOne(
+    { bookingId: booking._id },
+    {
+      $set: {
+        customerId: customer._id,
+        trainerId: trainer._id,
+        status: "completed",
+        startedAt: startTime,
+        endsAt: endTime,
+        completedAt: endTime,
+        durationMinutes: 60,
+        exercises: [
+          { name: "Goblet squat", sets: 3, reps: 12 },
+          { name: "Push-up", sets: 3, reps: 10, notes: "Knees down for the last set" },
+          { name: "Plank", sets: 3, notes: "40 seconds" },
+        ],
+        trainerNotes: "Good energy today. Squat depth improved; keep the core braced on push-ups.",
+        suggestedNextWorkout: "Lower body strength with lunges and Romanian deadlifts",
+      },
+    },
+    { upsert: true }
+  );
+}
+
 async function seed() {
   if (process.env.NODE_ENV === "production") {
     throw new Error("Refusing to seed demo data when NODE_ENV=production");
@@ -78,6 +147,7 @@ async function seed() {
   await PricingRule.updateMany({ name: { $ne: "Standard" } }, { $set: { isActive: false } });
   await PricingRule.syncIndexes();
   await PricingRule.updateOne({ name: "Standard" }, { $set: { ...DEFAULT_PRICING, isActive: true } }, { upsert: true });
+  await seedCompletedSession();
 
   console.log("Demo accounts ready:");
   console.log(`  customer  ${DEMO_ACCOUNTS.customer.email}`);
@@ -86,6 +156,7 @@ async function seed() {
     console.log(`  trainer   ${trainer.email.padEnd(26)} ${trainer.zones.join(" / ")}`);
   }
   console.log(`Availability: ${SEED_DAYS} days, 06:00–13:00 and 14:00–21:00 IST per trainer`);
+  console.log("History: one completed demo session yesterday (customer with Priya Nair)");
   const { normalPrice, peakPrice, commissionPercent } = DEFAULT_PRICING;
   console.log(
     `Pricing: normal ${formatInr(quoteForPrice(normalPrice, commissionPercent, false).totalAmount)}, ` +

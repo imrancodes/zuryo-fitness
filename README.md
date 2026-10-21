@@ -56,7 +56,7 @@ Open http://localhost:3000 and sign in, or use **Open demo access** on the sign-
 | Trainer | `meera.trainer@zuryo.dev` | Whitefield / Indiranagar |
 | Trainer | `kabir.trainer@zuryo.dev` | Jayanagar / HSR Layout |
 
-Trainer names, specialties and zones are synthetic. Each trainer gets availability for today and the next 7 days: 06:00–13:00 IST in their first zone and 14:00–21:00 IST in their second. Re-seeding replaces those windows; existing bookings are kept. The seed also upserts the `Standard` pricing rule with the default prices and peak hours (see [Pricing and checkout](#pricing-and-checkout)). The password is `DEMO_PASSWORD`, or `ZuryoDemo123!` if unset. Seeding:
+The seed also creates one synthetic **completed session** from yesterday, between the demo customer and Priya Nair, with a workout log, so the session history views have data. Trainer names, specialties and zones are synthetic. Each trainer gets availability for today and the next 7 days: 06:00–13:00 IST in their first zone and 14:00–21:00 IST in their second. Re-seeding replaces those windows; existing bookings are kept. The seed also upserts the `Standard` pricing rule with the default prices and peak hours (see [Pricing and checkout](#pricing-and-checkout)). The password is `DEMO_PASSWORD`, or `ZuryoDemo123!` if unset. Seeding:
 
 - can be re-run without creating duplicates
 - refuses to run when `NODE_ENV=production`
@@ -216,6 +216,70 @@ It would also need:
 - currency and tax (GST) handling
 - keeping card data entirely with the gateway (PCI DSS scope)
 
+## Trainer sessions
+
+### Lifecycle
+
+A session belongs to exactly one booking. Its ID is the **booking ID**, and the `SessionRecord` is created when the trainer starts the session. The unique `bookingId` index allows only one record per booking.
+
+| Session status | Meaning | Derived from |
+| --- | --- | --- |
+| `scheduled` | Confirmed, not started yet | booking `confirmed`, no record, start window not yet closed |
+| `in_progress` | The trainer has started it | record `in_progress` and `endsAt` still in the future |
+| `completed` | It reached its authoritative end time | record `completed`, or reconciled because `endsAt` has passed |
+| `missed` | Never started within the start window | booking `confirmed`, no record, start window closed. Display only; no data changes. |
+| `cancelled` | Won't take place | booking `cancelled` |
+
+Allowed transitions:
+- `scheduled → in_progress`, when started by the assigned trainer
+- `in_progress → completed`, once `endsAt` is reached
+
+`completed` is final. When a session completes, the booking `status` changes from `confirmed` to `completed`. **`paymentStatus` is never changed by sessions**, and payment records are never touched.
+
+### Starting a session
+
+Only the **assigned trainer** can start a session, and only when:
+- the booking is `confirmed`
+- it has been **paid**
+- the current time is within the **start window**: from 15 minutes before to 30 minutes after the scheduled start
+
+The server records `startedAt = now` and `endsAt = startedAt + 60 minutes`. Repeated or simultaneous start requests return the same record and never reset `startedAt`; a duplicate insert hits the unique index and returns the existing record. Any start or end time the client sends is ignored.
+
+### The authoritative timer
+
+```
+remainingSeconds = max(0, ceil((endsAt − serverNow) / 1000))
+```
+
+- `endsAt` is stored in MongoDB, so refreshing, closing the browser, delayed requests or a changed device clock cannot move it.
+- Every session response includes `serverNow`. The browser works out `offset = serverNow − Date.now()` and counts down with `Date.now() + offset`, so a wrong device clock is corrected.
+- The timer re-syncs with `GET /api/sessions/[id]` every 30 seconds and whenever the tab becomes visible again.
+- The browser's interval only updates the display. When it reaches zero, the trainer's browser calls `POST /api/sessions/[id]/complete` and the server decides.
+
+### Five-minute warning
+
+The warning appears when `0 < remainingSeconds ≤ 300`, that is from exactly 55:00 elapsed. Because it is derived from the stored `endsAt`, it reappears after a refresh during the last five minutes. It is shown once as an in-app alert banner, not as a repeated notification.
+
+### Lazy reconciliation
+
+Correct completion doesn't depend on a background process. **Every read or write of a session** reconciles it: the trainer and customer pages, the session APIs, `GET /api/bookings/me` and workout saves.
+- If `endsAt` has passed, a transaction runs a conditional update `{status: "in_progress", endsAt ≤ now} → completed`. It sets `completedAt = endsAt` (the authoritative end, not the time it was read) and marks the booking `completed`.
+- Concurrent reconciliations write the same document, so all but one hit a write conflict and see the session already completed. There is exactly **one** transition and no duplicate side effects.
+- Early completion is rejected with `409` until `endsAt` is reached.
+
+**In production**, a durable scheduler or delayed job could complete sessions exactly on time even if nobody opens them. Options include a cron-triggered route, MongoDB Atlas Scheduled Triggers, or a queue such as QStash, SQS or BullMQ. Because the transition is a conditional, idempotent update, it can run alongside lazy reconciliation without any risk.
+
+### Workout records
+
+- The assigned trainer logs exercises (name, sets, reps, notes), trainer notes and a suggested next workout.
+- The record is editable while the session is in progress and for **24 hours after completion**, then locked.
+- Only these fields can be written; timestamps and status can't be changed through the form.
+- Customers see the workout summary and trainer notes **after completion**, and only for their own bookings.
+
+### Notifications (future)
+
+Push or SMS reminders would be driven by the same timestamps: a delayed job scheduled at `endsAt − 5 minutes`, sent through a provider such as FCM, APNs or Twilio, with an idempotency key per session so a message is sent once.
+
 ## API
 
 All responses are JSON. Errors use the shape `{ "error": string, "fieldErrors"?: { [field]: string[] } }`, and internal errors return a generic `500`.
@@ -235,7 +299,7 @@ All responses are JSON. Errors use the shape `{ "error": string, "fieldErrors"?:
 | `PATCH` | `/api/trainers/me/availability/[id]` | Trainer (owner) | `409` if a booking would no longer be covered |
 | `DELETE` | `/api/trainers/me/availability/[id]` | Trainer (owner) | `409` if the window has bookings |
 | `POST` | `/api/bookings` | Customer | `{mode, startTime, serviceZone, preferredTrainerId?, idempotencyKey}`; `201` new, `200` replay, `400` invalid time, `409` unavailable |
-| `GET` | `/api/bookings/me` | Customer | Own bookings |
+| `GET` | `/api/bookings/me` | Customer | Own bookings, including `sessionStatus` |
 | `GET` | `/api/bookings/[id]` | Owner, assigned trainer or admin | `404` for anyone else |
 | `GET` | `/api/bookings/[id]/quote` | Customer (owner) | `{quote: {isPeak, sessionPrice, commissionPercent, commissionAmount, totalAmount}}`; `409` if not payable, `503` if pricing is paused |
 | `POST` | `/api/bookings/[id]/checkout` | Customer (owner) | Creates or reuses the 15-minute price snapshot; `201` new, `200` reused |
@@ -243,6 +307,11 @@ All responses are JSON. Errors use the shape `{ "error": string, "fieldErrors"?:
 | `GET` | `/api/payments/[id]` | Owner or admin | `404` for anyone else |
 | `GET` | `/api/admin/pricing` | Admin | Current pricing rule |
 | `PUT` | `/api/admin/pricing` | Admin | `{normalPrice, peakPrice (paise), commissionPercent, peakSlots[{daysOfWeek, startTime, endTime}], isActive}`; `400` on invalid values or overlapping windows |
+| `GET` | `/api/sessions/me?status=upcoming\|in_progress\|completed\|all` | Trainer | `{sessions, serverNow}` for the trainer's own assigned sessions |
+| `GET` | `/api/sessions/[id]` | Assigned trainer, owner customer or admin | `{session}` with timestamps and `serverNow`; customers only see the workout once it's completed; `404` for anyone else |
+| `POST` | `/api/sessions/[id]/start` | Assigned trainer | `201` started, `200` already started (same `startedAt`); `409` if cancelled, unpaid or outside the start window |
+| `POST` | `/api/sessions/[id]/complete` | Assigned trainer | `200` once `endsAt` has passed (idempotent); `409` before then or if not started |
+| `PATCH` | `/api/sessions/[id]/record` | Assigned trainer | `{exercises[{name, sets?, reps?, notes?}], trainerNotes, suggestedNextWorkout}`; `409` if not started or locked |
 | `GET` | `/api/admin/users` | Admin | |
 
 The server always takes the customer from the session, sets the session length, assigns the trainer and sets the status. Any `customerId`, `status` or duration sent by the client is ignored, and so is any price, commission or total.
@@ -256,7 +325,7 @@ The server always takes the customer from the session, sets the session length, 
 | `bun run start` | Serve the production build |
 | `bun run lint` | ESLint |
 | `bun run typecheck` | TypeScript check |
-| `bun run test` | Auth, availability, booking, pricing and checkout tests (including concurrent requests) against an in-memory MongoDB replica set |
+| `bun run test` | Auth, availability, booking, pricing, checkout and session tests (including concurrent requests and a controlled clock) against an in-memory MongoDB replica set |
 | `bun run seed` | Seed demo data into `MONGODB_URI` |
 
 ## Project structure
@@ -264,7 +333,7 @@ The server always takes the customer from the session, sets the session length, 
 ```
 app/          Pages, layouts and Route Handlers
 components/   Shared UI (app shell, page header, empty state, shadcn/ui)
-features/     Feature-specific UI (auth, booking, availability, checkout, pricing)
+features/     Feature-specific UI (auth, booking, availability, checkout, pricing, sessions)
 hooks/        Shared client hooks
 lib/          Infrastructure and shared rules: database, session, auth, time, booking, zones
 models/       Mongoose models
@@ -280,6 +349,8 @@ tests/        Bun tests
 - Sessions are stateless JWTs, so logging out clears the cookie but cannot revoke a token copied elsewhere before it expires. Deactivating a user does block access immediately.
 - There is no email verification or password reset.
 - Payments are simulated. There is no real gateway, refunds or invoices, and an unpaid booking still holds the trainer's slot.
+- Sessions complete lazily, when they are next read. Without a scheduler, an unopened session stays `in_progress` in the database until it is next read, though every view already reports it as completed. Missed sessions are display-only, with no automatic cancellation or refund.
+- The five-minute warning is in-app only; there are no push or SMS notifications yet.
 - There is a single editable pricing rule; there is no pricing history beyond the snapshot stored on each payment.
 - Re-running `bun run seed` resets the `Standard` pricing rule to the defaults.
 - Customers can't cancel or reschedule yet, and there are no trainer accept or decline steps.

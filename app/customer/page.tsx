@@ -40,7 +40,7 @@ export default async function CustomerHomePage() {
           Upcoming sessions
         </h2>
         {bookings.length > 0 ? (
-          <BookingList bookings={bookings} perspective="customer" hrefFor={(id) => `/customer/bookings/${id}`} />
+          <BookingList bookings={bookings} />
         ) : (
           <EmptyState
             icon={CalendarCheck}

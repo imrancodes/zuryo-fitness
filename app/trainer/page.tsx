@@ -1,18 +1,17 @@
-import { BicepsFlexed, CalendarClock, ClipboardList, TrendingUp, Wallet } from "lucide-react";
+import { BicepsFlexed, CalendarClock, TrendingUp, Wallet } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ComingSoonGrid, type ComingSoonItem } from "@/components/coming-soon-grid";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { BookingList } from "@/features/booking/booking-list";
+import { SessionList } from "@/features/sessions/session-list";
 import { requireRole } from "@/lib/auth";
-import { listUpcomingBookings } from "@/services/booking.service";
+import { listTrainerSessions } from "@/services/session.service";
 
 export const metadata: Metadata = { title: "Trainer" };
 
 const UPCOMING: ComingSoonItem[] = [
-  { icon: ClipboardList, title: "Session logs", description: "Record exercises, notes and next-workout suggestions." },
   { icon: Wallet, title: "Earnings", description: "See completed sessions and your payouts." },
   { icon: TrendingUp, title: "Client progress", description: "Follow how your regular clients are improving." },
 ];
@@ -26,22 +25,38 @@ const availabilityButton = (
 
 export default async function TrainerHomePage() {
   const user = await requireRole("trainer");
-  const bookings = await listUpcomingBookings({ trainerId: user.id });
+  const [active, upcoming] = await Promise.all([
+    listTrainerSessions(user.id, "in_progress"),
+    listTrainerSessions(user.id, "upcoming"),
+  ]);
 
   return (
     <>
       <PageHeader
         title="Trainer workspace"
-        description="Your upcoming sessions and schedule at a glance."
+        description="Your sessions and schedule at a glance."
         breadcrumbs={[{ label: "Trainer", href: "/trainer" }, { label: "Overview" }]}
         actions={availabilityButton}
       />
+      {active.length > 0 && (
+        <section aria-labelledby="active" className="space-y-3">
+          <h2 id="active" className="text-sm font-medium text-muted-foreground">
+            In progress
+          </h2>
+          <SessionList sessions={active} />
+        </section>
+      )}
       <section aria-labelledby="upcoming" className="space-y-3">
-        <h2 id="upcoming" className="text-sm font-medium text-muted-foreground">
-          Upcoming sessions
-        </h2>
-        {bookings.length > 0 ? (
-          <BookingList bookings={bookings} perspective="trainer" />
+        <div className="flex items-center justify-between">
+          <h2 id="upcoming" className="text-sm font-medium text-muted-foreground">
+            Upcoming sessions
+          </h2>
+          <Link href="/trainer/sessions?status=all" className="text-sm font-medium text-brand underline-offset-4 hover:underline">
+            View all sessions
+          </Link>
+        </div>
+        {upcoming.length > 0 ? (
+          <SessionList sessions={upcoming.slice(0, 5)} />
         ) : (
           <EmptyState
             icon={BicepsFlexed}

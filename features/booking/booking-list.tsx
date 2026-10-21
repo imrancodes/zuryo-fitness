@@ -2,6 +2,7 @@ import { ChevronRight, MapPin } from "lucide-react";
 import Link from "next/link";
 import { InitialsAvatar } from "@/components/initials-avatar";
 import { BookingStatusBadge } from "@/features/booking/booking-status-badge";
+import { PaymentStatusBadge } from "@/features/booking/payment-status-badge";
 import { formatDate, formatTime, TIME_ZONE_LABEL } from "@/lib/time";
 import type { BookingView } from "@/types/booking";
 
@@ -31,7 +32,10 @@ export function BookingList({ bookings, perspective, hrefFor }: BookingListProps
                 </span>
               </p>
             </div>
-            <BookingStatusBadge status={booking.status} />
+            <div className="flex flex-col items-end gap-1">
+              <BookingStatusBadge status={booking.status} />
+              {perspective === "customer" && <PaymentStatusBadge status={booking.paymentStatus} />}
+            </div>
           </>
         );
 

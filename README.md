@@ -56,7 +56,7 @@ Open http://localhost:3000 and sign in, or use **Open demo access** on the sign-
 | Trainer | `meera.trainer@zuryo.dev` | Whitefield / Indiranagar |
 | Trainer | `kabir.trainer@zuryo.dev` | Jayanagar / HSR Layout |
 
-Trainer names, specialties and zones are synthetic. Each trainer gets availability for today and the next 7 days: 06:00–13:00 IST in their first zone and 14:00–21:00 IST in their second. Re-seeding replaces those windows; existing bookings are kept. The seed also upserts a `Standard` pricing rule. The password is `DEMO_PASSWORD`, or `ZuryoDemo123!` if unset. Seeding:
+Trainer names, specialties and zones are synthetic. Each trainer gets availability for today and the next 7 days: 06:00–13:00 IST in their first zone and 14:00–21:00 IST in their second. Re-seeding replaces those windows; existing bookings are kept. The seed also upserts the `Standard` pricing rule with the default prices and peak hours (see [Pricing and checkout](#pricing-and-checkout)). The password is `DEMO_PASSWORD`, or `ZuryoDemo123!` if unset. Seeding:
 
 - can be re-run without creating duplicates
 - refuses to run when `NODE_ENV=production`
@@ -141,6 +141,81 @@ Today, booking results show up straight after the API response and on the next p
 - push booking events to customers and trainers with Server-Sent Events or WebSockets, from a MongoDB change stream on `bookings`
 - send trainer notifications (push, SMS or email) from a queue worker that consumes those booking events
 
+## Pricing and checkout
+
+### Pricing formula
+
+All money is stored and calculated as **integer paise** (₹1 = 100 paise) in the `INR` currency. Floating-point maths is never used for amounts.
+
+```
+session price = peak ? peakPrice : normalPrice
+commission    = round_half_up(session price × commissionPercent / 100)    (computed as (price × bps + 5000) div 10000)
+total payable = session price + commission
+```
+
+| Item | Normal slot | Peak slot |
+| --- | ---: | ---: |
+| Session price | ₹399.00 (39,900 paise) | ₹499.00 (49,900 paise) |
+| Society commission (10%) | ₹39.90 (3,990 paise) | ₹49.90 (4,990 paise) |
+| **Total payable** | **₹438.90 (43,890 paise)** | **₹548.90 (54,890 paise)** |
+
+These defaults live in `DEFAULT_PRICING` (`lib/pricing.ts`) and are seeded into the `Standard` pricing rule. The same `calculateQuote` function is used by the server, the admin preview and the tests.
+
+### Peak hours
+
+A session is **peak when its start time falls inside a peak window**. Windows are evaluated in **IST** (Asia/Kolkata): booking timestamps are stored in UTC and converted to IST, including the weekday, before checking. Each window covers its start time up to, but not including, its end time.
+
+| Days | Default peak windows (IST) |
+| --- | --- |
+| Monday–Friday | 06:00–10:00 and 17:00–21:00 |
+| Saturday–Sunday | 07:00–12:00 |
+
+Windows are configured by admins at `/admin/pricing` (days of the week plus a start and end time). Windows that share a day **may not overlap**, so there is never a precedence question. Peak status is a yes/no flag, so one matching window is enough.
+
+### Quote and price-lock policy
+
+1. Checkout shows a quote calculated on the server from the active pricing rule (`GET /api/bookings/[id]/quote`). Nothing is saved yet.
+2. **Continue to payment** (`POST /api/bookings/[id]/checkout`) stores a **price snapshot** as a `pending` payment that is **locked for 15 minutes**. Calling it again reuses the open snapshot.
+3. Paying charges **exactly the snapshot**. If an admin changes prices in the meantime, a quote that is still valid keeps its price. After 15 minutes the snapshot is marked `expired` and the customer has to review a fresh quote.
+4. The client only ever sends `paymentId` and the simulated `outcome`. Any price, commission or peak flag it sends is ignored.
+
+When no pricing rule is active, quotes and checkout return `503`, so checkout is paused until an admin activates pricing again.
+
+### Simulated payment
+
+There is no real gateway, and no card, UPI or bank details are collected. The checkout page has a clearly labelled **Simulated payment** panel where the customer chooses **Approve** (default) or **Decline**. The outcome is deterministic and never random.
+
+| Outcome | Payment record | Booking `paymentStatus` | Booking `status` |
+| --- | --- | --- | --- |
+| Approve | `paid`, `sim_…` reference, `paidAt` | `paid`, with the amounts stored on the booking | unchanged (`confirmed`) |
+| Decline | `failed`, with a reason | `failed`; the customer can start a new checkout and retry | unchanged |
+
+Booking lifecycle status and payment status are separate fields. Payment never changes `status`.
+
+### Payment idempotency and concurrency
+
+- **One open checkout per booking:** a partial unique index on `{bookingId, status}` where `status: "pending"`. Concurrent checkout requests get the same snapshot.
+- **One successful payment per booking:** a partial unique index on `{bookingId}` where `status: "paid"`.
+- **Retries are safe:** the payment ID acts as the idempotency key. Paying an already `paid` payment returns the same result without charging again.
+- **Simultaneous attempts:** `simulatePayment` runs in a MongoDB transaction that reads the payment, checks the booking and then writes both. Concurrent attempts on the same payment both write that document, so MongoDB aborts all but one with a `WriteConflict`. The retried transaction sees `paid` and returns the same result. The conditional booking update (`paymentStatus: {$ne: "paid"}`) and the unique "paid" index are extra safeguards in case different payment records race. Transactions alone aren't relied on to prevent the race; the forced write conflict on the shared document is what serializes the attempts.
+- A payment is only `paid` once the transaction that also updates the booking has committed.
+
+### Production payment considerations
+
+A real gateway (for example Razorpay or Stripe) would replace `POST /api/payments/simulate` with:
+
+- a gateway order created at checkout
+- a client-side SDK
+- a **signed webhook** that confirms the payment on the server
+
+It would also need:
+
+- signature verification
+- refunds and partial refunds
+- reconciliation jobs for payments stuck in `pending`
+- currency and tax (GST) handling
+- keeping card data entirely with the gateway (PCI DSS scope)
+
 ## API
 
 All responses are JSON. Errors use the shape `{ "error": string, "fieldErrors"?: { [field]: string[] } }`, and internal errors return a generic `500`.
@@ -162,9 +237,15 @@ All responses are JSON. Errors use the shape `{ "error": string, "fieldErrors"?:
 | `POST` | `/api/bookings` | Customer | `{mode, startTime, serviceZone, preferredTrainerId?, idempotencyKey}`; `201` new, `200` replay, `400` invalid time, `409` unavailable |
 | `GET` | `/api/bookings/me` | Customer | Own bookings |
 | `GET` | `/api/bookings/[id]` | Owner, assigned trainer or admin | `404` for anyone else |
+| `GET` | `/api/bookings/[id]/quote` | Customer (owner) | `{quote: {isPeak, sessionPrice, commissionPercent, commissionAmount, totalAmount}}`; `409` if not payable, `503` if pricing is paused |
+| `POST` | `/api/bookings/[id]/checkout` | Customer (owner) | Creates or reuses the 15-minute price snapshot; `201` new, `200` reused |
+| `POST` | `/api/payments/simulate` | Customer (owner) | `{paymentId, outcome: "approve" \| "decline"}`; `200` with the result, `409` if expired, closed or already paid |
+| `GET` | `/api/payments/[id]` | Owner or admin | `404` for anyone else |
+| `GET` | `/api/admin/pricing` | Admin | Current pricing rule |
+| `PUT` | `/api/admin/pricing` | Admin | `{normalPrice, peakPrice (paise), commissionPercent, peakSlots[{daysOfWeek, startTime, endTime}], isActive}`; `400` on invalid values or overlapping windows |
 | `GET` | `/api/admin/users` | Admin | |
 
-The server always takes the customer from the session, sets the session length, assigns the trainer and sets the status. Any `customerId`, `status` or duration sent by the client is ignored.
+The server always takes the customer from the session, sets the session length, assigns the trainer and sets the status. Any `customerId`, `status` or duration sent by the client is ignored, and so is any price, commission or total.
 
 ## Scripts
 
@@ -175,7 +256,7 @@ The server always takes the customer from the session, sets the session length, 
 | `bun run start` | Serve the production build |
 | `bun run lint` | ESLint |
 | `bun run typecheck` | TypeScript check |
-| `bun run test` | Auth, availability and booking tests (including concurrent requests) against an in-memory MongoDB replica set |
+| `bun run test` | Auth, availability, booking, pricing and checkout tests (including concurrent requests) against an in-memory MongoDB replica set |
 | `bun run seed` | Seed demo data into `MONGODB_URI` |
 
 ## Project structure
@@ -183,7 +264,7 @@ The server always takes the customer from the session, sets the session length, 
 ```
 app/          Pages, layouts and Route Handlers
 components/   Shared UI (app shell, page header, empty state, shadcn/ui)
-features/     Feature-specific UI (auth, booking, availability)
+features/     Feature-specific UI (auth, booking, availability, checkout, pricing)
 hooks/        Shared client hooks
 lib/          Infrastructure and shared rules: database, session, auth, time, booking, zones
 models/       Mongoose models
@@ -198,7 +279,9 @@ tests/        Bun tests
 - There is no rate limiting or account lockout on login.
 - Sessions are stateless JWTs, so logging out clears the cookie but cannot revoke a token copied elsewhere before it expires. Deactivating a user does block access immediately.
 - There is no email verification or password reset.
-- Bookings are confirmed without payment. Prices stay empty until pricing and checkout arrive in Phase 4.
+- Payments are simulated. There is no real gateway, refunds or invoices, and an unpaid booking still holds the trainer's slot.
+- There is a single editable pricing rule; there is no pricing history beyond the snapshot stored on each payment.
+- Re-running `bun run seed` resets the `Standard` pricing rule to the defaults.
 - Customers can't cancel or reschedule yet, and there are no trainer accept or decline steps.
 - A customer can book two overlapping sessions with different trainers; overlap is only blocked per trainer.
 - There is a single platform time zone (IST) and a fixed list of synthetic service zones.

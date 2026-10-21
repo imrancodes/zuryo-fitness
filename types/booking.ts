@@ -1,4 +1,4 @@
-import type { BookingMode, BookingStatus } from "@/lib/booking";
+import type { BookingMode, BookingStatus, PaymentStatus } from "@/lib/booking";
 import type { ServiceZone } from "@/lib/zones";
 
 export type TrainerSummary = {
@@ -26,7 +26,7 @@ export type BookingView = {
   serviceZone: ServiceZone;
   trainer: { id: string; name: string } | null;
   customer: { id: string; name: string };
-  paymentStatus: string;
+  paymentStatus: PaymentStatus;
   createdAt: string;
 };
 

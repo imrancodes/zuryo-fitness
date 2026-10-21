@@ -3,9 +3,11 @@ import { addMinutes, dayBoundsUtc, MINUTE_MS } from "@/lib/time";
 export const BOOKING_MODES = ["instant", "scheduled"] as const;
 export const BOOKING_STATUSES = ["pending", "confirmed", "cancelled", "completed"] as const;
 export const ACTIVE_BOOKING_STATUSES = ["pending", "confirmed"] as const;
+export const PAYMENT_STATUSES = ["unpaid", "paid", "failed", "refunded"] as const;
 
 export type BookingMode = (typeof BOOKING_MODES)[number];
 export type BookingStatus = (typeof BOOKING_STATUSES)[number];
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
 export const SESSION_MINUTES = 60;
 export const INSTANT_WINDOW_MINUTES = 60;

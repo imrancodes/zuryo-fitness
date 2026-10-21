@@ -1,4 +1,4 @@
-import { CalendarCheck, CalendarPlus, CreditCard, HeartPulse, Package } from "lucide-react";
+import { CalendarCheck, CalendarPlus, HeartPulse, Package } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ComingSoonGrid, type ComingSoonItem } from "@/components/coming-soon-grid";
@@ -12,7 +12,6 @@ import { listUpcomingBookings } from "@/services/booking.service";
 export const metadata: Metadata = { title: "Customer" };
 
 const UPCOMING: ComingSoonItem[] = [
-  { icon: CreditCard, title: "Payments", description: "Pay for sessions securely at checkout." },
   { icon: Package, title: "Session packages", description: "Buy packs of sessions and track what's left." },
   { icon: HeartPulse, title: "Fitness profile", description: "Share your goals so trainers can plan your workouts." },
 ];

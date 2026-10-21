@@ -1,9 +1,7 @@
-import { Schema, model, models, type InferSchemaType, type Model } from "mongoose";
-import { BOOKING_MODES, BOOKING_STATUSES } from "@/lib/booking";
+import { Schema, model, models, type InferSchemaType, type Model, type Types } from "mongoose";
+import { BOOKING_MODES, BOOKING_STATUSES, PAYMENT_STATUSES } from "@/lib/booking";
 import { SERVICE_ZONES } from "@/lib/zones";
 import { paise } from "@/models/fields";
-
-export const PAYMENT_STATUSES = ["unpaid", "paid", "refunded", "failed"] as const;
 
 const optionalPaise = { ...paise, required: false, default: null };
 
@@ -34,5 +32,6 @@ bookingSchema.index(
 );
 
 export type BookingDocument = InferSchemaType<typeof bookingSchema>;
+export type BookingRecord = BookingDocument & { _id: Types.ObjectId };
 
 export const Booking: Model<BookingDocument> = models.Booking ?? model("Booking", bookingSchema);

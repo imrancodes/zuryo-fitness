@@ -101,7 +101,7 @@ export function BookingWizard() {
     });
 
     if (result.ok) {
-      router.push(`/customer/bookings/${result.data.booking.id}?new=1`);
+      router.push(`/customer/checkout/${result.data.booking.id}?new=1`);
       return;
     }
 
@@ -281,7 +281,7 @@ export function BookingWizard() {
             trainer={trainerName ?? "Any available trainer"}
           />
           <p className="text-sm text-muted-foreground">
-            Payment is not collected yet. Pricing and checkout arrive in the next phase.
+            You&apos;ll see the exact price and complete payment on the next screen.
           </p>
           {error && (
             <div className="space-y-3">

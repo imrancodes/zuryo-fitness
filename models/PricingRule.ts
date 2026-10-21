@@ -7,7 +7,15 @@ const peakSlotSchema = new Schema(
   {
     daysOfWeek: { type: [Number], required: true, validate: (days: number[]) => days.every((day) => day >= 0 && day <= 6) },
     startTime: timeOfDay,
-    endTime: timeOfDay,
+    endTime: {
+      ...timeOfDay,
+      validate: {
+        validator(this: { startTime: string }, value: string) {
+          return value > this.startTime;
+        },
+        message: "endTime must be after startTime",
+      },
+    },
   },
   { _id: false }
 );
@@ -24,7 +32,10 @@ const pricingRuleSchema = new Schema(
   { timestamps: true }
 );
 
-pricingRuleSchema.index({ isActive: 1 });
+pricingRuleSchema.index(
+  { isActive: 1 },
+  { name: "one_active_rule", unique: true, partialFilterExpression: { isActive: true } }
+);
 
 export type PricingRuleDocument = InferSchemaType<typeof pricingRuleSchema>;
 

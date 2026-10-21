@@ -1,19 +1,24 @@
 import "server-only";
 import { isValidObjectId, type ClientSession, type Types } from "mongoose";
-import { ACTIVE_BOOKING_STATUSES, SESSION_MINUTES, startTimeError, type BookingMode, type BookingStatus } from "@/lib/booking";
+import {
+  ACTIVE_BOOKING_STATUSES,
+  SESSION_MINUTES,
+  startTimeError,
+  type BookingMode,
+  type BookingStatus,
+  type PaymentStatus,
+} from "@/lib/booking";
 import { isDuplicateKeyError, ServiceError } from "@/lib/errors";
 import { connectToDatabase } from "@/lib/mongodb";
 import { addMinutes } from "@/lib/time";
 import type { ServiceZone } from "@/lib/zones";
-import { Booking, type BookingDocument } from "@/models/Booking";
+import { Booking, type BookingRecord } from "@/models/Booking";
 import { User } from "@/models/User";
 import { openSlotsByTrainer } from "@/services/availability.service";
 import { withTrainerLock } from "@/services/schedule-lock";
 import type { BookingView } from "@/types/booking";
 import type { PublicUser } from "@/types/user";
 import type { CreateBookingInput } from "@/validators/booking";
-
-type BookingRecord = BookingDocument & { _id: Types.ObjectId };
 
 const SLOT_TAKEN = "This time was just taken. Choose another time.";
 const PREFERRED_UNAVAILABLE = "Your preferred trainer isn't available at this time in this zone. Choose another time or trainer.";
@@ -34,7 +39,7 @@ async function toBookingViews(bookings: BookingRecord[]): Promise<BookingView[]>
     serviceZone: booking.serviceZone as ServiceZone,
     trainer: booking.trainerId ? person(booking.trainerId) : null,
     customer: person(booking.customerId),
-    paymentStatus: booking.paymentStatus ?? "unpaid",
+    paymentStatus: (booking.paymentStatus ?? "unpaid") as PaymentStatus,
     createdAt: (booking.createdAt ?? new Date()).toISOString(),
   }));
 }

@@ -1,7 +1,7 @@
 import "server-only";
-import mongoose, { type ClientSession } from "mongoose";
+import type { ClientSession } from "mongoose";
 import { ServiceError } from "@/lib/errors";
-import { connectToDatabase } from "@/lib/mongodb";
+import { runTransaction } from "@/lib/transaction";
 import { User } from "@/models/User";
 
 /*
@@ -13,9 +13,7 @@ import { User } from "@/models/User";
  * cannot race. Throwing inside `work` aborts the transaction and nothing is persisted.
  */
 export async function withTrainerLock<T>(trainerId: string, work: (session: ClientSession) => Promise<T>) {
-  await connectToDatabase();
-
-  return mongoose.connection.transaction(async (session) => {
+  return runTransaction(async (session) => {
     const locked = await User.updateOne(
       { _id: trainerId, role: "trainer", isActive: true },
       { $inc: { scheduleVersion: 1 } },

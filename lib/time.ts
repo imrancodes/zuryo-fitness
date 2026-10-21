@@ -5,7 +5,7 @@ export const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 const OFFSET_MS = 330 * MINUTE_MS;
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+export const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function zonedToUtc(date: string, time = "00:00") {
@@ -45,10 +45,14 @@ export function formatTime(value: Date | string) {
   return formatClock(toZonedParts(value).time);
 }
 
-export function formatDate(value: Date | string) {
+export function weekdayInZone(value: Date | string) {
   const [year, month, day] = toZonedParts(value).date.split("-").map(Number);
-  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-  return `${WEEKDAYS[weekday]}, ${day} ${MONTHS[month - 1]}`;
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+}
+
+export function formatDate(value: Date | string) {
+  const [, month, day] = toZonedParts(value).date.split("-").map(Number);
+  return `${WEEKDAYS[weekdayInZone(value)]}, ${day} ${MONTHS[month - 1]}`;
 }
 
 export function formatDateTime(value: Date | string) {

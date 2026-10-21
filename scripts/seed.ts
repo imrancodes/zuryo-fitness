@@ -1,6 +1,8 @@
 import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
 import { DEMO_ACCOUNTS } from "@/lib/demo";
+import { formatInr } from "@/lib/money";
+import { DEFAULT_PRICING, quoteForPrice } from "@/lib/pricing";
 import { addDays, todayInZone, zonedToUtc } from "@/lib/time";
 import type { ServiceZone } from "@/lib/zones";
 import { Booking } from "@/models/Booking";
@@ -73,22 +75,9 @@ async function seed() {
     await TrainerAvailability.insertMany(buildAvailability(user._id, zones));
   }
 
-  await PricingRule.updateOne(
-    { name: "Standard" },
-    {
-      $set: {
-        normalPrice: 80000,
-        peakPrice: 100000,
-        commissionPercent: 20,
-        peakSlots: [
-          { daysOfWeek: [1, 2, 3, 4, 5], startTime: "06:00", endTime: "09:00" },
-          { daysOfWeek: [1, 2, 3, 4, 5], startTime: "17:00", endTime: "20:00" },
-        ],
-        isActive: true,
-      },
-    },
-    { upsert: true, runValidators: true }
-  );
+  await PricingRule.updateMany({ name: { $ne: "Standard" } }, { $set: { isActive: false } });
+  await PricingRule.syncIndexes();
+  await PricingRule.updateOne({ name: "Standard" }, { $set: { ...DEFAULT_PRICING, isActive: true } }, { upsert: true });
 
   console.log("Demo accounts ready:");
   console.log(`  customer  ${DEMO_ACCOUNTS.customer.email}`);
@@ -97,6 +86,11 @@ async function seed() {
     console.log(`  trainer   ${trainer.email.padEnd(26)} ${trainer.zones.join(" / ")}`);
   }
   console.log(`Availability: ${SEED_DAYS} days, 06:00–13:00 and 14:00–21:00 IST per trainer`);
+  const { normalPrice, peakPrice, commissionPercent } = DEFAULT_PRICING;
+  console.log(
+    `Pricing: normal ${formatInr(quoteForPrice(normalPrice, commissionPercent, false).totalAmount)}, ` +
+      `peak ${formatInr(quoteForPrice(peakPrice, commissionPercent, true).totalAmount)} (incl. ${commissionPercent}% commission)`
+  );
   console.log(
     process.env.DEMO_PASSWORD
       ? "Password: value of DEMO_PASSWORD"

@@ -11,7 +11,7 @@ export function DemoAccessNotice() {
           <FlaskConical className="size-4 text-brand" aria-hidden />
           Demo access
         </h2>
-        <Badge variant="outline">Development only</Badge>
+        <Badge variant="outline">Demo Environment</Badge>
       </div>
       <p className="text-sm text-muted-foreground">
         Explore Zuryo as a seeded demo customer, trainer or admin. Roles are still enforced by the server.

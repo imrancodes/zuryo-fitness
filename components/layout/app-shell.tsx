@@ -1,6 +1,7 @@
 import { Suspense, type ReactNode } from "react";
 import { Brand } from "@/components/brand";
 import { MobileNav } from "@/components/layout/mobile-nav";
+import { PageSkeleton } from "@/components/layout/page-skeleton";
 import { NavList, SidebarNav } from "@/components/layout/sidebar-nav";
 import { UserMenu } from "@/components/layout/user-menu";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,15 +16,6 @@ async function CurrentUserMenu({ role }: { role: Role }) {
 async function RoleGate({ role, children }: { role: Role; children: ReactNode }) {
   await requireRole(role);
   return children;
-}
-
-function PageSkeleton() {
-  return (
-    <div className="space-y-6" aria-busy aria-label="Loading">
-      <Skeleton className="h-9 w-64" />
-      <Skeleton className="h-56 w-full rounded-2xl" />
-    </div>
-  );
 }
 
 export function AppShell({ role, children }: { role: Role; children: ReactNode }) {

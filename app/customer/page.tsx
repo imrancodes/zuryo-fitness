@@ -7,11 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BookingList } from "@/features/booking/booking-list";
 import { PackageSummary } from "@/features/packages/package-summary";
-import { RecommendationList } from "@/features/recommendations/recommendation-list";
+import { AiRecommendationCard } from "@/features/recommendations/ai-recommendation-card";
 import { requireRole } from "@/lib/auth";
 import { listUpcomingBookings } from "@/services/booking.service";
 import { getPackageSummary } from "@/services/package.service";
-import { getRecommendations } from "@/services/recommendation.service";
 
 export const metadata: Metadata = { title: "Customer" };
 
@@ -24,10 +23,9 @@ const bookButton = (
 
 export default async function CustomerHomePage() {
   const user = await requireRole("customer");
-  const [bookings, packages, recommendations] = await Promise.all([
+  const [bookings, packages] = await Promise.all([
     listUpcomingBookings({ customerId: user.id }),
     getPackageSummary(user.id),
-    getRecommendations(user.id),
   ]);
 
   return (
@@ -76,7 +74,7 @@ export default async function CustomerHomePage() {
             View progress
           </Link>
         </div>
-        <RecommendationList result={recommendations} />
+        <AiRecommendationCard />
       </section>
     </>
   );

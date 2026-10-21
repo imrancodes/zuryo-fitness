@@ -12,6 +12,7 @@ import { Booking } from "@/models/Booking";
 import { FitnessAssessment } from "@/models/FitnessAssessment";
 import { FitnessProfile } from "@/models/FitnessProfile";
 import { SessionRecord } from "@/models/SessionRecord";
+import { getRecommendations } from "@/services/recommendation.service";
 import { saveWorkoutRecord, startSession } from "@/services/session.service";
 import { createAccount, createExpiredSession, createPaidBooking, makeRequest, routeContext } from "./helpers";
 
@@ -133,17 +134,21 @@ describe("progress and recommendations", () => {
     expect(progress.consistency).toEqual({ activeWeeks: 1, totalWeeks: 8 });
   });
 
-  test("recommendations need a profile and use only the customer's own history", async () => {
+  test("rules-based suggestions need a profile and use only the customer's own history", async () => {
     const [customer, other] = [await createAccount("customer"), await createAccount("customer")];
 
     expect(await get(myRecommendations, customer, "/api/recommendations/me")).toMatchObject({ status: "needs_profile" });
+    expect(await getRecommendations(customer.id)).toMatchObject({ status: "needs_profile" });
 
     await putProfile(makeRequest("/api/fitness-profile/me", { method: "PUT", session: customer.session, body: profile }));
     await completedWithNotes(customer, "Upper body push");
     await completedWithNotes(other, "Marathon prep");
 
-    const result = await get(myRecommendations, customer, "/api/recommendations/me");
-    const titles = result.suggestions.map((suggestion: { title: string }) => suggestion.title);
+    const result = await getRecommendations(customer.id);
+    if (result.status !== "ready") {
+      throw new Error("expected suggestions");
+    }
+    const titles = result.suggestions.map((suggestion) => suggestion.title);
 
     expect(result.status).toBe("ready");
     expect(titles).toContain("Upper body push");

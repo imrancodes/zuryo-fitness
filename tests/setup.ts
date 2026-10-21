@@ -11,6 +11,7 @@ const mongo = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngi
 
 process.env.MONGODB_URI = mongo.getUri("zuryo-test");
 process.env.SESSION_SECRET = "test-only-secret-with-at-least-32-characters";
+process.env.GEMINI_API_KEY = "";
 
 afterAll(async () => {
   await mongoose.disconnect();

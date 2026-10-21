@@ -21,7 +21,7 @@ export default function DemoPage() {
       <header className="border-b bg-card">
         <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4 sm:px-6">
           <Brand href="/login" />
-          <Badge variant="outline">Development only</Badge>
+          <Badge variant="outline">Demo Environment</Badge>
         </div>
       </header>
       <main className="mx-auto max-w-5xl space-y-8 px-4 py-10 sm:px-6">

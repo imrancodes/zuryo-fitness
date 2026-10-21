@@ -29,3 +29,10 @@ export const sessionListQuerySchema = z.object({
 
 export type WorkoutRecordInput = z.infer<typeof workoutRecordSchema>;
 export type SessionFilter = (typeof SESSION_FILTERS)[number];
+
+export const feedbackSchema = z.object({
+  rating: z.number({ error: "Choose a rating" }).int().min(1, "Rate from 1 to 5").max(5, "Rate from 1 to 5"),
+  comment: z.string().trim().max(500, "Keep your comment under 500 characters"),
+});
+
+export type FeedbackInput = z.infer<typeof feedbackSchema>;

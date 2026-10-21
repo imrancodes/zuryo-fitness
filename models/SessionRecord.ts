@@ -36,6 +36,7 @@ const sessionRecordSchema = new Schema(
 sessionRecordSchema.index({ customerId: 1, startedAt: -1 });
 sessionRecordSchema.index({ trainerId: 1, startedAt: -1 });
 sessionRecordSchema.index({ trainerId: 1, status: 1 });
+sessionRecordSchema.index({ customerId: 1, status: 1, completedAt: -1 });
 
 export type SessionRecordDocument = InferSchemaType<typeof sessionRecordSchema>;
 export type SessionRecordRecord = SessionRecordDocument & { _id: Types.ObjectId };

@@ -58,3 +58,8 @@ export function formatDate(value: Date | string) {
 export function formatDateTime(value: Date | string) {
   return `${formatDate(value)} · ${formatTime(value)}`;
 }
+
+export function formatShortDate(value: Date | string) {
+  const [, month, day] = toZonedParts(value).date.split("-").map(Number);
+  return `${day} ${MONTHS[month - 1]}`;
+}

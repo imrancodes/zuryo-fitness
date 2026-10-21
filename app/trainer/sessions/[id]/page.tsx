@@ -9,6 +9,8 @@ import { SessionPanel } from "@/features/sessions/session-panel";
 import { SessionStatusBadge } from "@/features/sessions/session-status-badge";
 import { WorkoutForm } from "@/features/sessions/workout-form";
 import { WorkoutSummary } from "@/features/sessions/workout-summary";
+import { ProfileSnapshot } from "@/features/fitness/profile-snapshot";
+import { HistoryList } from "@/features/sessions/history-list";
 import { requireRole } from "@/lib/auth";
 import { getSessionForViewer } from "@/services/session.service";
 
@@ -66,6 +68,33 @@ export default async function TrainerSessionPage({ params }: PageProps<"/trainer
             )}
           </CardContent>
         </Card>
+      </div>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Customer profile</CardTitle>
+            <CardDescription>Shared with you to plan this session. Personal details like age and weight stay private.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {session.customerProfile ? (
+              <ProfileSnapshot profile={session.customerProfile} />
+            ) : (
+              <p className="text-sm text-muted-foreground">This customer hasn&apos;t completed a fitness assessment yet.</p>
+            )}
+          </CardContent>
+        </Card>
+        <section aria-labelledby="previous" className="space-y-3">
+          <h2 id="previous" className="text-sm font-medium text-muted-foreground">
+            Previous sessions with you
+          </h2>
+          {session.previousSessions?.length ? (
+            <HistoryList entries={session.previousSessions} viewer="trainer" />
+          ) : (
+            <p className="rounded-xl border border-dashed bg-card p-4 text-sm text-muted-foreground">
+              This is your first session with {session.customer.name}.
+            </p>
+          )}
+        </section>
       </div>
     </>
   );

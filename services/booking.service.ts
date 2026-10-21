@@ -10,6 +10,7 @@ import {
 } from "@/lib/booking";
 import { isDuplicateKeyError, ServiceError } from "@/lib/errors";
 import { connectToDatabase } from "@/lib/mongodb";
+import type { SessionStatus } from "@/lib/session-timer";
 import { addMinutes } from "@/lib/time";
 import type { ServiceZone } from "@/lib/zones";
 import { Booking, type BookingRecord } from "@/models/Booking";
@@ -19,7 +20,7 @@ import { sessionStatusesFor } from "@/services/session.service";
 import { withTrainerLock } from "@/services/schedule-lock";
 import type { BookingView } from "@/types/booking";
 import type { PublicUser } from "@/types/user";
-import type { CreateBookingInput } from "@/validators/booking";
+import type { BookingFilter, CreateBookingInput } from "@/validators/booking";
 
 const SLOT_TAKEN = "This time was just taken. Choose another time.";
 const PREFERRED_UNAVAILABLE = "Your preferred trainer isn't available at this time in this zone. Choose another time or trainer.";
@@ -147,10 +148,22 @@ export async function getBookingForViewer(id: string, viewer: PublicUser) {
   return toBookingView(booking);
 }
 
-export async function listCustomerBookings(customerId: string) {
+const BOOKING_FILTER_STATUSES: Record<BookingFilter, SessionStatus[]> = {
+  upcoming: ["scheduled"],
+  in_progress: ["in_progress"],
+  completed: ["completed"],
+  cancelled: ["cancelled"],
+  all: ["scheduled", "in_progress", "completed", "missed", "cancelled"],
+};
+
+export async function listCustomerBookings(customerId: string, filter: BookingFilter = "all") {
   await connectToDatabase();
-  const bookings = await Booking.find({ customerId }).sort({ startTime: -1 }).limit(50).lean<BookingRecord[]>();
-  return toBookingViews(bookings);
+  const bookings = await Booking.find({ customerId })
+    .sort({ startTime: filter === "upcoming" ? 1 : -1 })
+    .limit(100)
+    .lean<BookingRecord[]>();
+  const views = await toBookingViews(bookings);
+  return views.filter((booking) => BOOKING_FILTER_STATUSES[filter].includes(booking.sessionStatus));
 }
 
 export async function listUpcomingBookings(filter: { customerId: string } | { trainerId: string }, now = new Date()) {

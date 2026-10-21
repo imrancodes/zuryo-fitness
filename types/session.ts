@@ -1,6 +1,7 @@
 import type { BookingMode, PaymentStatus } from "@/lib/booking";
 import type { SessionStatus } from "@/lib/session-timer";
 import type { ServiceZone } from "@/lib/zones";
+import type { ProfileSnapshot } from "@/types/fitness";
 
 export type ExerciseEntry = {
   name: string;
@@ -36,4 +37,19 @@ export type SessionView = {
   durationMinutes: number;
   record: WorkoutRecordView | null;
   serverNow: string;
+  customerProfile?: ProfileSnapshot | null;
+  previousSessions?: HistoryEntry[];
+};
+
+export type SessionFeedback = { rating: number; comment: string };
+
+export type HistoryEntry = {
+  id: string;
+  trainer: { id: string; name: string };
+  serviceZone: ServiceZone | null;
+  startedAt: string | null;
+  completedAt: string;
+  durationMinutes: number;
+  record: WorkoutRecordView;
+  feedback: SessionFeedback | null;
 };

@@ -3,8 +3,10 @@ import { connectToDatabase } from "@/lib/mongodb";
 import type { Role } from "@/lib/roles";
 import { SESSION_COOKIE, signSession } from "@/lib/session";
 import type { ServiceZone } from "@/lib/zones";
+import { Booking } from "@/models/Booking";
 import { TrainerAvailability } from "@/models/TrainerAvailability";
 import { hashPassword } from "@/services/auth.service";
+import { startSession } from "@/services/session.service";
 import { User } from "@/models/User";
 
 export const PASSWORD = "Password123!";
@@ -48,6 +50,30 @@ export async function createAccount(role: Role) {
   });
   const id = user._id.toString();
   return { id, session: await signSession({ userId: id, role }) };
+}
+
+export async function createPaidBooking(customerId: string, trainerId: string, startTime: Date, overrides: Record<string, unknown> = {}) {
+  await connectToDatabase();
+  const booking = await Booking.create({
+    customerId,
+    trainerId,
+    startTime,
+    endTime: new Date(startTime.getTime() + 60 * 60_000),
+    bookingType: "scheduled",
+    status: "confirmed",
+    paymentStatus: "paid",
+    serviceZone: "Indiranagar",
+    ...overrides,
+  });
+  return booking._id.toString();
+}
+
+export async function createExpiredSession(customerId: string, trainerId?: string) {
+  const trainer = trainerId ?? (await createAccount("trainer")).id;
+  const startTime = new Date(Date.now() - 70 * 60_000);
+  const bookingId = await createPaidBooking(customerId, trainer, startTime);
+  await startSession(bookingId, trainer, startTime);
+  return { bookingId, trainerId: trainer };
 }
 
 export async function addWindow(trainerId: string, serviceZone: ServiceZone, startTime: Date, endTime: Date) {

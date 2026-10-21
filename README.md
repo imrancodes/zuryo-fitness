@@ -56,7 +56,7 @@ Open http://localhost:3000 and sign in, or use **Open demo access** on the sign-
 | Trainer | `meera.trainer@zuryo.dev` | Whitefield / Indiranagar |
 | Trainer | `kabir.trainer@zuryo.dev` | Jayanagar / HSR Layout |
 
-The seed also creates one synthetic **completed session** from yesterday, between the demo customer and Priya Nair, with a workout log, so the session history views have data. Trainer names, specialties and zones are synthetic. Each trainer gets availability for today and the next 7 days: 06:00–13:00 IST in their first zone and 14:00–21:00 IST in their second. Re-seeding replaces those windows; existing bookings are kept. The seed also upserts the `Standard` pricing rule with the default prices and peak hours (see [Pricing and checkout](#pricing-and-checkout)). The password is `DEMO_PASSWORD`, or `ZuryoDemo123!` if unset. Seeding:
+For the demo customer the seed also creates a fitness profile with **two dated assessments**, **three synthetic completed sessions** with Priya Nair (one with feedback), and a **10-session package** with those three deductions recorded (7 remaining). Re-seeding resets these demo records. Trainer names, specialties and zones are synthetic. Each trainer gets availability for today and the next 7 days: 06:00–13:00 IST in their first zone and 14:00–21:00 IST in their second. Re-seeding replaces those windows; existing bookings are kept. The seed also upserts the `Standard` pricing rule with the default prices and peak hours (see [Pricing and checkout](#pricing-and-checkout)). The password is `DEMO_PASSWORD`, or `ZuryoDemo123!` if unset. Seeding:
 
 - can be re-run without creating duplicates
 - refuses to run when `NODE_ENV=production`
@@ -280,6 +280,72 @@ Correct completion doesn't depend on a background process. **Every read or write
 
 Push or SMS reminders would be driven by the same timestamps: a delayed job scheduled at `endsAt − 5 minutes`, sent through a provider such as FCM, APNs or Twilio, with an idempotency key per session so a message is sent once.
 
+## Customer profile, packages and history
+
+### Fitness profile
+
+Each customer has **one current profile**; a unique index on `customerId` enforces this. Only the signed-in customer can read or write it, and any `customerId` sent in the request is ignored.
+
+| Field | Rules |
+| --- | --- |
+| `age` | Whole number, **16–90** |
+| `weight` | Kilograms, **30–250**, at most one decimal |
+| `fitnessGoals` | **1–3** of: lose weight, build muscle, improve endurance, increase flexibility, general fitness, sports performance |
+| `experienceLevel` | `beginner`, `intermediate` or `advanced` |
+| `workoutPreferences` | `{ workoutTypes: strength · cardio · hiit · yoga · mobility · boxing, preferredTimes: morning · afternoon · evening }` |
+
+No medical or other sensitive information is collected. **Every save also appends a `FitnessAssessment`**, an append-only history written in the same transaction, so weight trends come from real dated records. The profile is always the latest assessment.
+
+**Existing records.** `FitnessProfile` existed before this phase but was never written to. `workoutPreferences` changed from a list of strings to the structured object above, and the reader treats missing fields as empty lists. New fields on `Package` default to `source: "admin"` and `grantedBy: null`.
+
+### Packages and session credits
+
+- A package holds `totalSessions`, `usedSessions` and `remainingSessions` (non-negative integers), with `remainingSessions = totalSessions − usedSessions`.
+- Lifecycle: `active` → `exhausted` when the balance reaches 0. `expired` and `cancelled` are reserved and not used yet.
+- **How credits are created in this MVP:** the seed gives the demo customer a 10-session package, and admins grant packages at `/admin/packages`. Customers can't buy packages or change balances; there's no endpoint for it. Packages are **separate from per-session payments**: a customer still pays for each booking at checkout, and a successful payment does **not** create or use a credit. Linking packages to checkout is future work.
+
+### Deduction rules
+
+- A credit is used **only when a session completes**. That happens inside Phase 5's reconciliation transaction, at the single `in_progress → completed` transition. Creating a booking, paying, starting a session or cancelling never uses a credit.
+- The oldest active package with a balance is used first, through a conditional update (`remainingSessions ≥ 1`), so a balance can never go below 0. When it reaches 0 the package becomes `exhausted`.
+- Every completed session writes one `PackageDeduction` ledger row, with a **unique `bookingId`**, outcome `deducted` or `no_package`, and the package used. With no credits left, the session still completes and is recorded as `no_package`.
+- **Atomic and idempotent:**
+  - the completion, the package update and the ledger row commit together in one transaction, so a session can't end up completed with its deduction missing
+  - retries and simultaneous completions of the same session transition only once, and the unique `bookingId` is a backstop
+  - simultaneous completions of different bookings write the same package document, so MongoDB forces a retry and the retry sees the updated balance
+- Sessions completed **before** this phase are not backfilled.
+
+### Booking and workout history
+
+- `/customer/bookings` filters by **Upcoming, In progress, Completed, Cancelled and All**. Missed sessions appear under All.
+- Each row shows the date and time, trainer, zone, booking status, session status, payment status and the 60-minute duration. Cancelling and rescheduling aren't supported yet, and the page says so.
+- `/customer/history` lists the customer's own completed sessions: exercises, duration, trainer notes and the suggested next workout. Customers can add or update a **1–5 rating and a comment**; this writes only `customerFeedback`, never the trainer's notes.
+- Trainers see a customer's goals, experience and preferences (not age or weight), plus their own previous sessions with that customer, on the session page.
+
+### Progress
+
+`/customer/progress` uses only stored data:
+- completed workouts in total and in the last 30 days
+- sessions per week over the last 8 weeks
+- active weeks (weeks with at least one session)
+- credits remaining
+- weight over time from saved assessments; a trend appears once there are two or more, otherwise it explains what's missing
+
+Completing workouts shows consistency; it isn't presented as proof of changes in fitness or health.
+
+### Workout suggestions (rules-based)
+
+`services/recommendation.service.ts` loads **only the signed-in customer's** profile and last 5 completed sessions. The rules live in `lib/recommendations.ts` and are deterministic:
+
+1. A session in the last 24 hours means **light mobility and recovery** comes first.
+2. The trainer's latest **suggested next workout** is included.
+3. The **first goal** chooses the focus: for example, build muscle leads to strength training, and lose weight leads to fat-burning conditioning. It uses a **preferred workout type** when one fits the goal.
+4. **Experience caps the intensity**: beginner light (2–3 sets, technique first), intermediate moderate, advanced challenging but always "leave 1–2 reps in reserve". Nothing is ever maximal.
+5. No sessions yet, or none in 14 days, means **easing back in** at a light intensity.
+6. The same body area trained twice in a row means switching to another area. Otherwise the second goal adds another suggestion.
+
+Each suggestion explains why it was chosen. Without a profile the API returns `needs_profile` and the UI asks the customer to complete the assessment. Suggestions carry a "not medical advice" disclaimer and never diagnose anything. The AI feature arrives in Phase 7.
+
 ## API
 
 All responses are JSON. Errors use the shape `{ "error": string, "fieldErrors"?: { [field]: string[] } }`, and internal errors return a generic `500`.
@@ -299,7 +365,7 @@ All responses are JSON. Errors use the shape `{ "error": string, "fieldErrors"?:
 | `PATCH` | `/api/trainers/me/availability/[id]` | Trainer (owner) | `409` if a booking would no longer be covered |
 | `DELETE` | `/api/trainers/me/availability/[id]` | Trainer (owner) | `409` if the window has bookings |
 | `POST` | `/api/bookings` | Customer | `{mode, startTime, serviceZone, preferredTrainerId?, idempotencyKey}`; `201` new, `200` replay, `400` invalid time, `409` unavailable |
-| `GET` | `/api/bookings/me` | Customer | Own bookings, including `sessionStatus` |
+| `GET` | `/api/bookings/me?status=` | Customer | Own bookings, including `sessionStatus`; `status` is `upcoming`, `in_progress`, `completed`, `cancelled` or `all` |
 | `GET` | `/api/bookings/[id]` | Owner, assigned trainer or admin | `404` for anyone else |
 | `GET` | `/api/bookings/[id]/quote` | Customer (owner) | `{quote: {isPeak, sessionPrice, commissionPercent, commissionAmount, totalAmount}}`; `409` if not payable, `503` if pricing is paused |
 | `POST` | `/api/bookings/[id]/checkout` | Customer (owner) | Creates or reuses the 15-minute price snapshot; `201` new, `200` reused |
@@ -312,6 +378,16 @@ All responses are JSON. Errors use the shape `{ "error": string, "fieldErrors"?:
 | `POST` | `/api/sessions/[id]/start` | Assigned trainer | `201` started, `200` already started (same `startedAt`); `409` if cancelled, unpaid or outside the start window |
 | `POST` | `/api/sessions/[id]/complete` | Assigned trainer | `200` once `endsAt` has passed (idempotent); `409` before then or if not started |
 | `PATCH` | `/api/sessions/[id]/record` | Assigned trainer | `{exercises[{name, sets?, reps?, notes?}], trainerNotes, suggestedNextWorkout}`; `409` if not started or locked |
+| `PUT` | `/api/sessions/[id]/feedback` | Customer (owner) | `{rating 1–5, comment}`; `409` until the session is completed |
+| `GET` | `/api/sessions/history/me` | Customer | Own completed sessions with workout, notes and feedback |
+| `GET` | `/api/fitness-profile/me` | Customer | `{profile}` or `{profile: null}` |
+| `PUT` | `/api/fitness-profile/me` | Customer | Saves the profile and appends an assessment; `400` with field errors |
+| `GET` | `/api/packages/me` | Customer | `{packages, deductions}` |
+| `GET` | `/api/packages/me/summary` | Customer | `{summary: {purchased, used, remaining, activePackages}}` |
+| `GET` | `/api/progress/me` | Customer | Weekly counts, consistency, totals, weight history and credits |
+| `GET` | `/api/recommendations/me` | Customer | `{status: "needs_profile", message}` or `{status: "ready", suggestions[{title, description, intensity, reasons}], disclaimer}` |
+| `GET` | `/api/admin/packages` | Admin | Recent packages |
+| `POST` | `/api/admin/packages` | Admin | `{email, sessions 1–50}`; `201`, `404` if the email doesn't belong to a customer |
 | `GET` | `/api/admin/users` | Admin | |
 
 The server always takes the customer from the session, sets the session length, assigns the trainer and sets the status. Any `customerId`, `status` or duration sent by the client is ignored, and so is any price, commission or total.
@@ -325,7 +401,7 @@ The server always takes the customer from the session, sets the session length, 
 | `bun run start` | Serve the production build |
 | `bun run lint` | ESLint |
 | `bun run typecheck` | TypeScript check |
-| `bun run test` | Auth, availability, booking, pricing, checkout and session tests (including concurrent requests and a controlled clock) against an in-memory MongoDB replica set |
+| `bun run test` | Auth, availability, booking, pricing, checkout, session, profile, package, history and progress tests (including concurrent requests and a controlled clock) against an in-memory MongoDB replica set |
 | `bun run seed` | Seed demo data into `MONGODB_URI` |
 
 ## Project structure
@@ -333,7 +409,7 @@ The server always takes the customer from the session, sets the session length, 
 ```
 app/          Pages, layouts and Route Handlers
 components/   Shared UI (app shell, page header, empty state, shadcn/ui)
-features/     Feature-specific UI (auth, booking, availability, checkout, pricing, sessions)
+features/     Feature-specific UI (auth, booking, availability, checkout, pricing, sessions, fitness, packages, progress, recommendations)
 hooks/        Shared client hooks
 lib/          Infrastructure and shared rules: database, session, auth, time, booking, zones
 models/       Mongoose models
@@ -351,6 +427,9 @@ tests/        Bun tests
 - Payments are simulated. There is no real gateway, refunds or invoices, and an unpaid booking still holds the trainer's slot.
 - Sessions complete lazily, when they are next read. Without a scheduler, an unopened session stays `in_progress` in the database until it is next read, though every view already reports it as completed. Missed sessions are display-only, with no automatic cancellation or refund.
 - The five-minute warning is in-app only; there are no push or SMS notifications yet.
+- Packages aren't linked to checkout yet: customers still pay per session, and credits are granted by an admin or the seed. Sessions completed before Phase 6 weren't backfilled into the ledger.
+- Cancelling and rescheduling aren't supported; the bookings page says so.
+- Progress is limited to completed sessions and self-reported weight. Suggestions are rule-based and not medical advice.
 - There is a single editable pricing rule; there is no pricing history beyond the snapshot stored on each payment.
 - Re-running `bun run seed` resets the `Standard` pricing rule to the defaults.
 - Customers can't cancel or reschedule yet, and there are no trainer accept or decline steps.

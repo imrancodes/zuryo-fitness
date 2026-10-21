@@ -16,11 +16,14 @@ import { formatTime, TIME_ZONE_LABEL } from "@/lib/time";
 import { runTransaction } from "@/lib/transaction";
 import type { ServiceZone } from "@/lib/zones";
 import { Booking, type BookingRecord } from "@/models/Booking";
+import { PackageDeduction } from "@/models/PackageDeduction";
 import { SessionRecord, type SessionRecordRecord } from "@/models/SessionRecord";
 import { namesById } from "@/services/auth.service";
-import type { SessionView } from "@/types/session";
+import { getProfileSnapshot } from "@/services/fitness-profile.service";
+import { consumeSessionCredit } from "@/services/package.service";
+import type { HistoryEntry, SessionView } from "@/types/session";
 import type { PublicUser } from "@/types/user";
-import type { SessionFilter, WorkoutRecordInput } from "@/validators/session";
+import type { FeedbackInput, SessionFilter, WorkoutRecordInput } from "@/validators/session";
 
 const FILTER_STATUSES: Record<SessionFilter, SessionStatus[]> = {
   upcoming: ["scheduled"],
@@ -33,6 +36,8 @@ async function reconcile(record: SessionRecordRecord, now: Date) {
   if (record.status !== "in_progress" || !record.endsAt || record.endsAt > now) {
     return { record, transitioned: false };
   }
+
+  await PackageDeduction.init();
 
   return runTransaction(async (session) => {
     const completed = await SessionRecord.findOneAndUpdate(
@@ -47,6 +52,7 @@ async function reconcile(record: SessionRecordRecord, now: Date) {
     }
 
     await Booking.updateOne({ _id: record.bookingId, status: "confirmed" }, { $set: { status: "completed" } }, { session });
+    await consumeSessionCredit({ bookingId: completed.bookingId, sessionRecordId: completed._id, customerId: completed.customerId }, session);
     return { record: completed, transitioned: true };
   });
 }
@@ -232,7 +238,82 @@ export async function getSessionForViewer(bookingId: string, viewer: PublicUser,
   }
 
   const session = await viewFor(booking, now);
-  return viewer.role === "customer" && session.status !== "completed" ? { ...session, record: null } : session;
+
+  if (viewer.role === "customer") {
+    return session.status === "completed" ? session : { ...session, record: null };
+  }
+
+  if (viewer.role === "trainer") {
+    const customerId = booking.customerId.toString();
+    const [customerProfile, history] = await Promise.all([
+      getProfileSnapshot(customerId),
+      listCompletedSessions({ customerId, trainerId: viewer.id }, now),
+    ]);
+    return { ...session, customerProfile, previousSessions: history.filter((entry) => entry.id !== session.id).slice(0, 5) };
+  }
+
+  return session;
+}
+
+export async function reconcileExpiredForCustomer(customerId: string, now = new Date()) {
+  await connectToDatabase();
+  const expired = await SessionRecord.find({ customerId, status: "in_progress", endsAt: { $lte: now } }).lean<SessionRecordRecord[]>();
+  await reconcileAll(expired, now);
+}
+
+export async function listCompletedSessions(filter: { customerId: string; trainerId?: string }, now = new Date(), limit = 50) {
+  await reconcileExpiredForCustomer(filter.customerId, now);
+
+  const records = await SessionRecord.find({
+    customerId: filter.customerId,
+    status: "completed",
+    ...(filter.trainerId && { trainerId: filter.trainerId }),
+  })
+    .sort({ completedAt: -1 })
+    .limit(limit)
+    .lean<SessionRecordRecord[]>();
+
+  const [bookings, person] = await Promise.all([
+    Booking.find({ _id: { $in: records.map((record) => record.bookingId) } }, "serviceZone").lean(),
+    namesById(records.map((record) => record.trainerId)),
+  ]);
+  const zoneOf = new Map(bookings.map((booking) => [booking._id.toString(), booking.serviceZone as ServiceZone]));
+
+  return records.map(
+    (record): HistoryEntry => ({
+      id: record.bookingId.toString(),
+      trainer: person(record.trainerId),
+      serviceZone: zoneOf.get(record.bookingId.toString()) ?? null,
+      startedAt: record.startedAt?.toISOString() ?? null,
+      completedAt: (record.completedAt ?? record.endsAt ?? now).toISOString(),
+      durationMinutes: record.durationMinutes ?? SESSION_MINUTES,
+      record: toWorkoutView(record, now),
+      feedback: record.customerFeedback?.rating
+        ? { rating: record.customerFeedback.rating, comment: record.customerFeedback.comment ?? "" }
+        : null,
+    })
+  );
+}
+
+export async function saveFeedback(bookingId: string, customerId: string, input: FeedbackInput, now = new Date()) {
+  await connectToDatabase();
+  const booking = isValidObjectId(bookingId) ? await Booking.findOne({ _id: bookingId, customerId }).lean<BookingRecord>() : null;
+  const existing = booking ? await findRecord(booking._id) : null;
+
+  if (!booking) {
+    throw new ServiceError(404, "Session not found");
+  }
+
+  const record = existing ? (await reconcile(existing, now)).record : null;
+  if (record?.status !== "completed") {
+    throw new ServiceError(409, "You can rate a session once it's completed.");
+  }
+
+  await SessionRecord.updateOne(
+    { _id: record._id, customerId, status: "completed" },
+    { $set: { customerFeedback: { rating: input.rating, comment: input.comment } } }
+  );
+  return { rating: input.rating, comment: input.comment };
 }
 
 export async function listTrainerSessions(trainerId: string, filter: SessionFilter, now = new Date()) {

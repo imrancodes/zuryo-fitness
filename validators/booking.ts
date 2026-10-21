@@ -28,3 +28,11 @@ export const trainersQuerySchema = z.object({
 
 export type CreateBookingInput = z.infer<typeof createBookingSchema>;
 export type AvailabilityQuery = z.infer<typeof availabilityQuerySchema>;
+
+export const BOOKING_FILTERS = ["upcoming", "in_progress", "completed", "cancelled", "all"] as const;
+
+export const bookingListQuerySchema = z.object({
+  status: z.enum(BOOKING_FILTERS).default("all"),
+});
+
+export type BookingFilter = (typeof BOOKING_FILTERS)[number];

@@ -6,6 +6,10 @@ import { calculateQuote, DEFAULT_PRICING, quoteForPrice } from "@/lib/pricing";
 import { addDays, addMinutes, todayInZone, zonedToUtc } from "@/lib/time";
 import type { ServiceZone } from "@/lib/zones";
 import { Booking } from "@/models/Booking";
+import { FitnessAssessment } from "@/models/FitnessAssessment";
+import { FitnessProfile } from "@/models/FitnessProfile";
+import { Package } from "@/models/Package";
+import { PackageDeduction } from "@/models/PackageDeduction";
 import { Payment } from "@/models/Payment";
 import { PricingRule } from "@/models/PricingRule";
 import { SessionRecord } from "@/models/SessionRecord";
@@ -14,7 +18,59 @@ import { User } from "@/models/User";
 
 const DEFAULT_DEMO_PASSWORD = "ZuryoDemo123!";
 const SEED_DAYS = 8;
-const HISTORY_BOOKING_KEY = "seed-history-session";
+const SEED_PACKAGE_SESSIONS = 10;
+
+const DEMO_PROFILE = {
+  age: 32,
+  weight: 76.4,
+  fitnessGoals: ["build_muscle", "general_fitness"],
+  experienceLevel: "intermediate",
+  workoutPreferences: { workoutTypes: ["strength", "hiit"], preferredTimes: ["morning", "evening"] },
+};
+
+const DEMO_ASSESSMENTS = [
+  { daysAgo: 30, weight: 78.2 },
+  { daysAgo: 0, weight: 76.4 },
+];
+
+const HISTORY_SESSIONS = [
+  {
+    key: "seed-history-session-3",
+    daysAgo: 15,
+    exercises: [
+      { name: "Bench press", sets: 3, reps: 10 },
+      { name: "Seated row", sets: 3, reps: 12 },
+      { name: "Plank", sets: 3, notes: "30 seconds" },
+    ],
+    trainerNotes: "First session. Good form on rows; bench press needs a slower lowering phase.",
+    suggestedNextWorkout: "Full-body circuit with light dumbbells",
+    feedback: { rating: 4, comment: "Clear coaching, slightly rushed warm-up." },
+  },
+  {
+    key: "seed-history-session-2",
+    daysAgo: 8,
+    exercises: [
+      { name: "Kettlebell swing", sets: 4, reps: 15 },
+      { name: "Push-up", sets: 3, reps: 12 },
+      { name: "Walking lunge", sets: 3, reps: 10 },
+    ],
+    trainerNotes: "Strong conditioning work. Keep the hinge on swings and avoid squatting the movement.",
+    suggestedNextWorkout: "Lower body strength with goblet squats",
+    feedback: null,
+  },
+  {
+    key: "seed-history-session",
+    daysAgo: 1,
+    exercises: [
+      { name: "Goblet squat", sets: 3, reps: 12 },
+      { name: "Push-up", sets: 3, reps: 10, notes: "Knees down for the last set" },
+      { name: "Plank", sets: 3, notes: "40 seconds" },
+    ],
+    trainerNotes: "Good energy today. Squat depth improved; keep the core braced on push-ups.",
+    suggestedNextWorkout: "Lower body strength with lunges and Romanian deadlifts",
+    feedback: null,
+  },
+];
 
 const TRAINERS: { name: string; email: string; specialties: string[]; zones: [ServiceZone, ServiceZone] }[] = [
   { ...DEMO_ACCOUNTS.trainer, specialties: ["Strength", "Mobility"], zones: ["Indiranagar", "Koramangala"] },
@@ -52,16 +108,63 @@ function buildAvailability(trainerId: mongoose.Types.ObjectId, zones: [ServiceZo
   );
 }
 
-async function seedCompletedSession() {
+async function seedCustomerHistory() {
   const customer = await User.findOne({ email: DEMO_ACCOUNTS.customer.email }).orFail();
   const trainer = await User.findOne({ email: DEMO_ACCOUNTS.trainer.email }).orFail();
   const rule = await PricingRule.findOne({ name: "Standard" }).orFail();
-  const startTime = zonedToUtc(addDays(todayInZone(), -1), "10:00");
+  const seedPackage = await Package.findOneAndUpdate(
+    { customerId: customer._id, source: "seed" },
+    { $setOnInsert: { totalSessions: SEED_PACKAGE_SESSIONS, usedSessions: 0, remainingSessions: SEED_PACKAGE_SESSIONS, status: "active" } },
+    { upsert: true, new: true }
+  ).orFail();
+
+  for (const history of HISTORY_SESSIONS) {
+    await seedCompletedSession({ customerId: customer._id, trainerId: trainer._id, ruleId: rule._id, packageId: seedPackage._id, ...history });
+  }
+
+  const used = await PackageDeduction.countDocuments({ packageId: seedPackage._id, outcome: "deducted" });
+  await Package.updateOne(
+    { _id: seedPackage._id },
+    {
+      $set: {
+        usedSessions: used,
+        remainingSessions: SEED_PACKAGE_SESSIONS - used,
+        status: used >= SEED_PACKAGE_SESSIONS ? "exhausted" : "active",
+      },
+    }
+  );
+
+  await FitnessProfile.updateOne({ customerId: customer._id }, { $set: { customerId: customer._id, ...DEMO_PROFILE } }, { upsert: true });
+  await FitnessAssessment.deleteMany({ customerId: customer._id });
+  await FitnessAssessment.insertMany(
+    DEMO_ASSESSMENTS.map(({ daysAgo, weight }) => ({
+      customerId: customer._id,
+      age: DEMO_PROFILE.age,
+      weight,
+      fitnessGoals: DEMO_PROFILE.fitnessGoals,
+      experienceLevel: DEMO_PROFILE.experienceLevel,
+      createdAt: zonedToUtc(addDays(todayInZone(), -daysAgo), "09:00"),
+    }))
+  );
+}
+
+type SeedHistory = (typeof HISTORY_SESSIONS)[number] & {
+  customerId: mongoose.Types.ObjectId;
+  trainerId: mongoose.Types.ObjectId;
+  ruleId: mongoose.Types.ObjectId;
+  packageId: mongoose.Types.ObjectId;
+};
+
+async function seedCompletedSession({ customerId, trainerId, ruleId, packageId, key, daysAgo, exercises, trainerNotes, suggestedNextWorkout, feedback }: SeedHistory) {
+  const startTime = zonedToUtc(addDays(todayInZone(), -daysAgo), "10:00");
   const endTime = addMinutes(startTime, 60);
   const quote = calculateQuote(DEFAULT_PRICING, startTime);
+  const customer = { _id: customerId };
+  const trainer = { _id: trainerId };
+  const rule = { _id: ruleId };
 
   const booking = await Booking.findOneAndUpdate(
-    { customerId: customer._id, idempotencyKey: HISTORY_BOOKING_KEY },
+    { customerId: customer._id, idempotencyKey: key },
     {
       $set: {
         trainerId: trainer._id,
@@ -87,14 +190,14 @@ async function seedCompletedSession() {
         ...quote,
         pricingRuleId: rule._id,
         expiresAt: startTime,
-        providerReference: "sim_seed_history",
+        providerReference: `sim_${key}`,
         paidAt: addMinutes(startTime, -120),
       },
     },
     { upsert: true }
   );
 
-  await SessionRecord.updateOne(
+  const record = await SessionRecord.findOneAndUpdate(
     { bookingId: booking._id },
     {
       $set: {
@@ -105,15 +208,18 @@ async function seedCompletedSession() {
         endsAt: endTime,
         completedAt: endTime,
         durationMinutes: 60,
-        exercises: [
-          { name: "Goblet squat", sets: 3, reps: 12 },
-          { name: "Push-up", sets: 3, reps: 10, notes: "Knees down for the last set" },
-          { name: "Plank", sets: 3, notes: "40 seconds" },
-        ],
-        trainerNotes: "Good energy today. Squat depth improved; keep the core braced on push-ups.",
-        suggestedNextWorkout: "Lower body strength with lunges and Romanian deadlifts",
+        exercises,
+        trainerNotes,
+        suggestedNextWorkout,
+        ...(feedback && { customerFeedback: feedback }),
       },
     },
+    { upsert: true, new: true }
+  ).orFail();
+
+  await PackageDeduction.updateOne(
+    { bookingId: booking._id },
+    { $setOnInsert: { sessionRecordId: record._id, customerId: customer._id, packageId, outcome: "deducted" } },
     { upsert: true }
   );
 }
@@ -131,7 +237,7 @@ async function seed() {
 
   await mongoose.connect(uri);
   console.log(`Seeding demo data into database "${mongoose.connection.name}"`);
-  await Promise.all([User.init(), TrainerAvailability.init(), PricingRule.init(), Booking.init()]);
+  await Promise.all([User.init(), TrainerAvailability.init(), PricingRule.init(), Booking.init(), PackageDeduction.init(), FitnessProfile.init()]);
 
   const passwordHash = await bcrypt.hash(process.env.DEMO_PASSWORD || DEFAULT_DEMO_PASSWORD, 10);
 
@@ -147,7 +253,7 @@ async function seed() {
   await PricingRule.updateMany({ name: { $ne: "Standard" } }, { $set: { isActive: false } });
   await PricingRule.syncIndexes();
   await PricingRule.updateOne({ name: "Standard" }, { $set: { ...DEFAULT_PRICING, isActive: true } }, { upsert: true });
-  await seedCompletedSession();
+  await seedCustomerHistory();
 
   console.log("Demo accounts ready:");
   console.log(`  customer  ${DEMO_ACCOUNTS.customer.email}`);
@@ -156,7 +262,7 @@ async function seed() {
     console.log(`  trainer   ${trainer.email.padEnd(26)} ${trainer.zones.join(" / ")}`);
   }
   console.log(`Availability: ${SEED_DAYS} days, 06:00–13:00 and 14:00–21:00 IST per trainer`);
-  console.log("History: one completed demo session yesterday (customer with Priya Nair)");
+  console.log("Customer history: profile + 2 assessments, 3 completed sessions with Priya Nair, 10-session package (3 used)");
   const { normalPrice, peakPrice, commissionPercent } = DEFAULT_PRICING;
   console.log(
     `Pricing: normal ${formatInr(quoteForPrice(normalPrice, commissionPercent, false).totalAmount)}, ` +

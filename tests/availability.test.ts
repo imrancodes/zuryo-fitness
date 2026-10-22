@@ -9,7 +9,7 @@ import { TrainerAvailability } from "@/models/TrainerAvailability";
 import { createAccount, makeRequest, routeContext } from "./helpers";
 
 const date = addDays(todayInZone(), 3);
-const window = { date, startTime: "09:00", endTime: "12:00", serviceZone: "Indiranagar" };
+const window = { date, startTime: "09:00", endTime: "12:00", serviceZone: "Mumbai" };
 
 type Account = { id: string; session: string };
 
@@ -40,7 +40,7 @@ describe("trainer availability", () => {
       await listWindows(makeRequest(`/api/trainers/me/availability?date=${date}`, { session: trainer.session }))
     ).json();
     expect(windows).toHaveLength(1);
-    expect(windows[0]).toMatchObject({ startTime: zonedToUtc(date, "09:00").toISOString(), serviceZone: "Indiranagar" });
+    expect(windows[0]).toMatchObject({ startTime: zonedToUtc(date, "09:00").toISOString(), serviceZone: "Mumbai" });
   });
 
   test("rejects ranges where the end is not after the start", async () => {
@@ -77,7 +77,7 @@ describe("trainer availability", () => {
         body: {
           mode: "scheduled",
           startTime: zonedToUtc(date, "10:00").toISOString(),
-          serviceZone: "Indiranagar",
+          serviceZone: "Mumbai",
           idempotencyKey: crypto.randomUUID(),
         },
       })

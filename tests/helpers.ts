@@ -62,7 +62,7 @@ export async function createPaidBooking(customerId: string, trainerId: string, s
     bookingType: "scheduled",
     status: "confirmed",
     paymentStatus: "paid",
-    serviceZone: "Indiranagar",
+    serviceZone: "Mumbai",
     ...overrides,
   });
   return booking._id.toString();

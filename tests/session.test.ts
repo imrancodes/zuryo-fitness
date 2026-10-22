@@ -34,7 +34,7 @@ async function setup(startTime = soon(), overrides: Record<string, unknown> = {}
     bookingType: "scheduled",
     status: "confirmed",
     paymentStatus: "paid",
-    serviceZone: "Indiranagar",
+    serviceZone: "Mumbai",
     ...overrides,
   });
   return { customer, trainer, bookingId: booking._id.toString(), startTime };

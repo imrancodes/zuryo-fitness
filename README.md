@@ -46,18 +46,37 @@ Open http://localhost:3000 and sign in, or use **Open demo access** on the sign-
 
 ## Demo accounts
 
-`bun run seed` creates or updates:
+| Command | What it deletes before seeding |
+| --- | --- |
+| `bun run seed` | Only demo data: the `@zuryo.dev` accounts' bookings, payments, sessions, credits, profiles and availability. Other users and their data are kept, and any of their bookings with old zone names are renamed. |
+| `bun run seed:reset` | **Every document in every Zuryo collection**, including real users. Use it for a clean demo database; it can't be undone. |
 
-| Role | Email | Service zones (morning / afternoon) |
+Both create the same demo data. All names and data are synthetic. The password is `DEMO_PASSWORD`, or `ZuryoDemo123!` if unset.
+
+| Role | Email | Details |
 | --- | --- | --- |
-| Customer | `customer@zuryo.dev` | |
 | Admin | `admin@zuryo.dev` | |
-| Trainer (demo) | `trainer@zuryo.dev` | Indiranagar / Koramangala |
-| Trainer | `rohan.trainer@zuryo.dev` | Koramangala / HSR Layout |
-| Trainer | `meera.trainer@zuryo.dev` | Whitefield / Indiranagar |
-| Trainer | `kabir.trainer@zuryo.dev` | Jayanagar / HSR Layout |
+| Customer (demo) | `customer@zuryo.dev` | Aarav Mehta: intermediate profile with 3 dated assessments (weight 78.2 → 76.4 kg), 10-session package with 4 used |
+| Customer | `neha.customer@zuryo.dev` | Neha Kapoor: beginner profile, 2-session package granted by the admin, **exhausted** |
+| Customer | `arjun.customer@zuryo.dev` | Arjun Malhotra: advanced profile, no package (completions are recorded as `no_package`) |
+| Customer | `sana.customer@zuryo.dev` | Sana Sheikh: **no fitness profile**, to show the "complete your assessment" state |
+| Trainer (demo) | `trainer@zuryo.dev` | Priya Nair: Mumbai / Thane |
+| Trainer | `rohan.trainer@zuryo.dev` | Rohan Das: Thane / Navi Mumbai |
+| Trainer | `meera.trainer@zuryo.dev` | Meera Iyer: Delhi / Mumbai |
+| Trainer | `kabir.trainer@zuryo.dev` | Kabir Singh: Bengaluru / Navi Mumbai |
+| Trainer | `ananya.trainer@zuryo.dev` | Ananya Rao: Bengaluru / Delhi |
+| Trainer | `vikram.trainer@zuryo.dev` | Vikram Joshi: Navi Mumbai / Thane |
 
-For the demo customer the seed also creates a fitness profile with **two dated assessments**, **three synthetic completed sessions** with Priya Nair (one with feedback), and a **10-session package** with those three deductions recorded (7 remaining). Re-seeding resets these demo records. Trainer names, specialties and zones are synthetic. Each trainer gets availability for today and the next 7 days: 06:00–13:00 IST in their first zone and 14:00–21:00 IST in their second. Re-seeding replaces those windows; existing bookings are kept. The seed also upserts the `Standard` pricing rule with the default prices and peak hours (see [Pricing and checkout](#pricing-and-checkout)). The password is `DEMO_PASSWORD`, or `ZuryoDemo123!` if unset. Seeding:
+Each trainer gets availability for today and the next 7 days: 06:00–13:00 IST in their first zone and 14:00–21:00 IST in their second.
+
+The seed creates **25 bookings** across all five cities, dated relative to the day you run it (scenarios live in `scripts/seed-data.ts`):
+- **9 completed**, each with a paid payment, a workout record and a package deduction; 4 have customer feedback. Two of them were booked as instant sessions.
+- **2 cancelled** (one unpaid, one after a failed payment) and **2 missed** (one paid, one unpaid).
+- **12 upcoming**, inside each trainer's availability windows: 8 paid (including two for Priya tomorrow), 2 unpaid, 1 with an expired checkout attempt and 1 with a failed payment.
+
+Sessions in progress and open checkouts aren't seeded, because they expire within minutes. To try them live, start one of Priya's paid sessions during its start window.
+
+The seed also sets up the `Standard` pricing rule with the default prices and peak hours (see [Pricing and checkout](#pricing-and-checkout)). It checks every scenario before writing anything. Seeding:
 
 - can be re-run without creating duplicates
 - refuses to run when `NODE_ENV=production`
@@ -92,7 +111,7 @@ All start times must fall on a 15-minute mark. Past times are rejected.
 
 ### Service zones
 
-Zones are a fixed list of synthetic Bengaluru areas (`lib/zones.ts`): Indiranagar, Koramangala, HSR Layout, Whitefield and Jayanagar. No GPS is used. Each availability window has exactly one zone, and a trainer only matches a booking request when one of their windows **in the requested zone** covers the whole 60-minute session.
+Zones are a fixed list of Indian cities (`lib/zones.ts`): Mumbai, Thane, Navi Mumbai, Delhi and Bengaluru. All of them use IST. No GPS is used. Records saved with the earlier zone names (Indiranagar, Koramangala, HSR Layout, Whitefield, Jayanagar) are renamed to Mumbai, Thane, Navi Mumbai, Delhi and Bengaluru respectively when `bun run seed` runs. Each availability window has exactly one zone, and a trainer only matches a booking request when one of their windows **in the requested zone** covers the whole 60-minute session.
 
 ### Trainer assignment
 
@@ -537,7 +556,8 @@ The server always takes the customer from the session, sets the session length, 
 | `bun run lint` | ESLint |
 | `bun run typecheck` | TypeScript check |
 | `bun run test` | All automated tests: auth, availability, booking, pricing, checkout, sessions, profiles, packages, history, progress and AI recommendations, including concurrent requests and a controlled clock, against an in-memory MongoDB replica set. Gemini is mocked, so tests never call the real API |
-| `bun run seed` | Seed demo data into `MONGODB_URI` |
+| `bun run seed` | Replace the demo data in `MONGODB_URI`, keeping other users |
+| `bun run seed:reset` | Delete **everything** in `MONGODB_URI`, then seed demo data |
 
 ## Project structure
 

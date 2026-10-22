@@ -1,10 +1,12 @@
 import bcrypt from "bcryptjs";
-import mongoose from "mongoose";
+import mongoose, { type Collection, type Types } from "mongoose";
+import { SESSION_MINUTES, type BookingStatus, type PaymentStatus } from "@/lib/booking";
 import { DEMO_ACCOUNTS } from "@/lib/demo";
 import { formatInr } from "@/lib/money";
-import { calculateQuote, DEFAULT_PRICING, quoteForPrice } from "@/lib/pricing";
+import { calculateQuote, DEFAULT_PRICING, QUOTE_TTL_MINUTES, quoteForPrice } from "@/lib/pricing";
 import { addDays, addMinutes, todayInZone, zonedToUtc } from "@/lib/time";
-import type { ServiceZone } from "@/lib/zones";
+import { LEGACY_ZONE_NAMES, type ServiceZone } from "@/lib/zones";
+import { AiRecommendationCache } from "@/models/AiRecommendation";
 import { Booking } from "@/models/Booking";
 import { FitnessAssessment } from "@/models/FitnessAssessment";
 import { FitnessProfile } from "@/models/FitnessProfile";
@@ -15,74 +17,143 @@ import { PricingRule } from "@/models/PricingRule";
 import { SessionRecord } from "@/models/SessionRecord";
 import { TrainerAvailability } from "@/models/TrainerAvailability";
 import { User } from "@/models/User";
+import {
+  BOOKINGS,
+  CUSTOMERS,
+  DAILY_WINDOWS,
+  SEED_DAYS,
+  TRAINERS,
+  type SeedBooking,
+  type SeedOutcome,
+  type SeedTrainer,
+} from "./seed-data";
 
 const DEFAULT_DEMO_PASSWORD = "ZuryoDemo123!";
-const SEED_DAYS = 8;
-const SEED_PACKAGE_SESSIONS = 10;
+const DEMO_EMAIL = /@zuryo\.dev$/;
+const DECLINED = "Declined by the simulated payment provider. No money was taken.";
+const RESET = process.argv.includes("--reset");
 
-const DEMO_PROFILE = {
-  age: 32,
-  weight: 76.4,
-  fitnessGoals: ["build_muscle", "general_fitness"],
-  experienceLevel: "intermediate",
-  workoutPreferences: { workoutTypes: ["strength", "hiit"], preferredTimes: ["morning", "evening"] },
+type SeededModel = { collection: Collection; init(): Promise<unknown> };
+
+const ALL_MODELS: SeededModel[] = [
+  User,
+  Booking,
+  Payment,
+  SessionRecord,
+  PackageDeduction,
+  Package,
+  TrainerAvailability,
+  FitnessProfile,
+  FitnessAssessment,
+  AiRecommendationCache,
+  PricingRule,
+];
+
+const UPCOMING: SeedOutcome[] = ["upcoming_paid", "upcoming_unpaid", "expired_checkout", "failed_payment"];
+const PAID: SeedOutcome[] = ["completed", "upcoming_paid", "missed_paid"];
+const FAILED: SeedOutcome[] = ["failed_payment", "cancelled_failed"];
+
+const BOOKING_STATE: Record<SeedOutcome, { status: BookingStatus; paymentStatus: PaymentStatus }> = {
+  completed: { status: "completed", paymentStatus: "paid" },
+  upcoming_paid: { status: "confirmed", paymentStatus: "paid" },
+  missed_paid: { status: "confirmed", paymentStatus: "paid" },
+  upcoming_unpaid: { status: "confirmed", paymentStatus: "unpaid" },
+  missed_unpaid: { status: "confirmed", paymentStatus: "unpaid" },
+  expired_checkout: { status: "confirmed", paymentStatus: "unpaid" },
+  failed_payment: { status: "confirmed", paymentStatus: "failed" },
+  cancelled: { status: "cancelled", paymentStatus: "unpaid" },
+  cancelled_failed: { status: "cancelled", paymentStatus: "failed" },
 };
 
-const DEMO_ASSESSMENTS = [
-  { daysAgo: 30, weight: 78.2 },
-  { daysAgo: 0, weight: 76.4 },
-];
+const toMinutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
 
-const HISTORY_SESSIONS = [
-  {
-    key: "seed-history-session-3",
-    daysAgo: 15,
-    exercises: [
-      { name: "Bench press", sets: 3, reps: 10 },
-      { name: "Seated row", sets: 3, reps: 12 },
-      { name: "Plank", sets: 3, notes: "30 seconds" },
-    ],
-    trainerNotes: "First session. Good form on rows; bench press needs a slower lowering phase.",
-    suggestedNextWorkout: "Full-body circuit with light dumbbells",
-    feedback: { rating: 4, comment: "Clear coaching, slightly rushed warm-up." },
-  },
-  {
-    key: "seed-history-session-2",
-    daysAgo: 8,
-    exercises: [
-      { name: "Kettlebell swing", sets: 4, reps: 15 },
-      { name: "Push-up", sets: 3, reps: 12 },
-      { name: "Walking lunge", sets: 3, reps: 10 },
-    ],
-    trainerNotes: "Strong conditioning work. Keep the hinge on swings and avoid squatting the movement.",
-    suggestedNextWorkout: "Lower body strength with goblet squats",
-    feedback: null,
-  },
-  {
-    key: "seed-history-session",
-    daysAgo: 1,
-    exercises: [
-      { name: "Goblet squat", sets: 3, reps: 12 },
-      { name: "Push-up", sets: 3, reps: 10, notes: "Knees down for the last set" },
-      { name: "Plank", sets: 3, notes: "40 seconds" },
-    ],
-    trainerNotes: "Good energy today. Squat depth improved; keep the core braced on push-ups.",
-    suggestedNextWorkout: "Lower body strength with lunges and Romanian deadlifts",
-    feedback: null,
-  },
-];
+function validateScenarios() {
+  const trainers = new Map(TRAINERS.map((trainer) => [trainer.email, trainer]));
+  const customers = new Set(CUSTOMERS.map((customer) => customer.email));
+  const busy = new Map<string, [number, number][]>();
 
-const TRAINERS: { name: string; email: string; specialties: string[]; zones: [ServiceZone, ServiceZone] }[] = [
-  { ...DEMO_ACCOUNTS.trainer, specialties: ["Strength", "Mobility"], zones: ["Indiranagar", "Koramangala"] },
-  { name: "Rohan Das", email: "rohan.trainer@zuryo.dev", specialties: ["Yoga", "Flexibility"], zones: ["Koramangala", "HSR Layout"] },
-  { name: "Meera Iyer", email: "meera.trainer@zuryo.dev", specialties: ["HIIT", "Weight loss"], zones: ["Whitefield", "Indiranagar"] },
-  { name: "Kabir Singh", email: "kabir.trainer@zuryo.dev", specialties: ["Boxing", "Conditioning"], zones: ["Jayanagar", "HSR Layout"] },
-];
+  for (const booking of BOOKINGS) {
+    const trainer = trainers.get(booking.trainer);
+    const fail = (problem: string) => {
+      throw new Error(`Seed booking ${booking.key}: ${problem}`);
+    };
 
-const DAILY_WINDOWS = [
-  { startTime: "06:00", endTime: "13:00" },
-  { startTime: "14:00", endTime: "21:00" },
-];
+    if (!trainer || !customers.has(booking.customer)) fail("unknown trainer or customer");
+    const zoneIndex = trainer!.zones.indexOf(booking.zone);
+    if (zoneIndex < 0) fail(`${booking.trainer} doesn't serve ${booking.zone}`);
+    if (toMinutes(booking.time) % 15 !== 0) fail("start time must be on a 15-minute mark");
+
+    const upcoming = UPCOMING.includes(booking.outcome);
+    if (upcoming && (booking.day < 1 || booking.day >= SEED_DAYS)) fail(`upcoming bookings need a day from 1 to ${SEED_DAYS - 1}`);
+    if (!upcoming && booking.day > -1) fail("past outcomes need a negative day");
+
+    const start = toMinutes(booking.time);
+    const end = start + SESSION_MINUTES;
+    const window = DAILY_WINDOWS[zoneIndex];
+    if (upcoming && (start < toMinutes(window.startTime) || end > toMinutes(window.endTime))) {
+      fail(`outside ${trainer!.name}'s ${booking.zone} window ${window.startTime}–${window.endTime}`);
+    }
+
+    if (!booking.outcome.startsWith("cancelled")) {
+      const absolute: [number, number] = [booking.day * 1440 + start, booking.day * 1440 + end];
+      const taken = busy.get(booking.trainer) ?? [];
+      if (taken.some(([from, to]) => absolute[0] < to && from < absolute[1])) fail(`overlaps another booking for ${booking.trainer}`);
+      busy.set(booking.trainer, [...taken, absolute]);
+    }
+    if (booking.outcome === "completed" && !booking.workout) fail("completed bookings need a workout");
+  }
+}
+
+async function wipeEverything() {
+  console.log(`Reset: deleting ALL documents in database "${mongoose.connection.name}"`);
+  for (const model of ALL_MODELS) {
+    const { deletedCount } = await model.collection.deleteMany({});
+    console.log(`  ${model.collection.collectionName.padEnd(22)} ${deletedCount} deleted`);
+  }
+}
+
+async function removeDemoData() {
+  const demoUsers = await User.find({ email: DEMO_EMAIL }, "_id").lean();
+  const ids = demoUsers.map((user) => user._id);
+  const bookingIds = (await Booking.find({ $or: [{ customerId: { $in: ids } }, { trainerId: { $in: ids } }] }, "_id").lean()).map(
+    (booking) => booking._id
+  );
+  const keep = [DEMO_ACCOUNTS.admin.email, ...TRAINERS.map((trainer) => trainer.email), ...CUSTOMERS.map((customer) => customer.email)];
+
+  await Promise.all([
+    Payment.deleteMany({ bookingId: { $in: bookingIds } }),
+    SessionRecord.deleteMany({ bookingId: { $in: bookingIds } }),
+    PackageDeduction.deleteMany({ bookingId: { $in: bookingIds } }),
+    Booking.deleteMany({ _id: { $in: bookingIds } }),
+    Package.deleteMany({ customerId: { $in: ids } }),
+    FitnessProfile.deleteMany({ customerId: { $in: ids } }),
+    FitnessAssessment.deleteMany({ customerId: { $in: ids } }),
+    AiRecommendationCache.deleteMany({ customerId: { $in: ids } }),
+    TrainerAvailability.deleteMany({ trainerId: { $in: ids } }),
+  ]);
+  await User.deleteMany({ email: { $regex: DEMO_EMAIL, $nin: keep } });
+  console.log(`Removed previous demo data: ${bookingIds.length} bookings and their payments, sessions and credits`);
+}
+
+async function renameLegacyZones() {
+  let renamed = 0;
+
+  for (const [legacy, zone] of Object.entries(LEGACY_ZONE_NAMES)) {
+    const results = await Promise.all([
+      Booking.collection.updateMany({ serviceZone: legacy }, { $set: { serviceZone: zone } }),
+      TrainerAvailability.collection.updateMany({ serviceZone: legacy }, { $set: { serviceZone: zone } }),
+    ]);
+    renamed += results.reduce((total, result) => total + result.modifiedCount, 0);
+  }
+
+  if (renamed > 0) {
+    console.log(`Renamed ${renamed} bookings and availability windows from old service zone names`);
+  }
+}
+
+function backdate(model: Pick<SeededModel, "collection">, id: Types.ObjectId, createdAt: Date, withUpdatedAt = true) {
+  return model.collection.updateOne({ _id: id }, { $set: { createdAt, ...(withUpdatedAt && { updatedAt: createdAt }) } });
+}
 
 async function upsertUser(fields: { name: string; email: string; role: string; specialties?: string[] }, passwordHash: string) {
   await User.updateOne(
@@ -93,7 +164,7 @@ async function upsertUser(fields: { name: string; email: string; role: string; s
   return User.findOne({ email: fields.email }).orFail();
 }
 
-function buildAvailability(trainerId: mongoose.Types.ObjectId, zones: [ServiceZone, ServiceZone]) {
+function buildAvailability(trainerId: Types.ObjectId, zones: SeedTrainer["zones"]) {
   const today = todayInZone();
 
   return Array.from({ length: SEED_DAYS }, (_, offset) => addDays(today, offset)).flatMap((date) =>
@@ -102,126 +173,148 @@ function buildAvailability(trainerId: mongoose.Types.ObjectId, zones: [ServiceZo
       date: zonedToUtc(date),
       startTime: zonedToUtc(date, window.startTime),
       endTime: zonedToUtc(date, window.endTime),
-      serviceZone: zones[index],
+      serviceZone: zones[index] as ServiceZone,
       isAvailable: true,
     }))
   );
 }
 
-async function seedCustomerHistory() {
-  const customer = await User.findOne({ email: DEMO_ACCOUNTS.customer.email }).orFail();
-  const trainer = await User.findOne({ email: DEMO_ACCOUNTS.trainer.email }).orFail();
-  const rule = await PricingRule.findOne({ name: "Standard" }).orFail();
-  const seedPackage = await Package.findOneAndUpdate(
-    { customerId: customer._id, source: "seed" },
-    { $setOnInsert: { totalSessions: SEED_PACKAGE_SESSIONS, usedSessions: 0, remainingSessions: SEED_PACKAGE_SESSIONS, status: "active" } },
-    { upsert: true, new: true }
-  ).orFail();
-
-  for (const history of HISTORY_SESSIONS) {
-    await seedCompletedSession({ customerId: customer._id, trainerId: trainer._id, ruleId: rule._id, packageId: seedPackage._id, ...history });
+function bookedAt(booking: SeedBooking, start: Date, now: Date) {
+  if (booking.mode === "instant") {
+    return addMinutes(start, -40);
   }
-
-  const used = await PackageDeduction.countDocuments({ packageId: seedPackage._id, outcome: "deducted" });
-  await Package.updateOne(
-    { _id: seedPackage._id },
-    {
-      $set: {
-        usedSessions: used,
-        remainingSessions: SEED_PACKAGE_SESSIONS - used,
-        status: used >= SEED_PACKAGE_SESSIONS ? "exhausted" : "active",
-      },
-    }
-  );
-
-  await FitnessProfile.updateOne({ customerId: customer._id }, { $set: { customerId: customer._id, ...DEMO_PROFILE } }, { upsert: true });
-  await FitnessAssessment.deleteMany({ customerId: customer._id });
-  await FitnessAssessment.insertMany(
-    DEMO_ASSESSMENTS.map(({ daysAgo, weight }) => ({
-      customerId: customer._id,
-      age: DEMO_PROFILE.age,
-      weight,
-      fitnessGoals: DEMO_PROFILE.fitnessGoals,
-      experienceLevel: DEMO_PROFILE.experienceLevel,
-      createdAt: zonedToUtc(addDays(todayInZone(), -daysAgo), "09:00"),
-    }))
-  );
+  const threeDaysBefore = addMinutes(start, -3 * 24 * 60);
+  const recently = addMinutes(now, -120);
+  return threeDaysBefore < recently ? threeDaysBefore : recently;
 }
 
-type SeedHistory = (typeof HISTORY_SESSIONS)[number] & {
-  customerId: mongoose.Types.ObjectId;
-  trainerId: mongoose.Types.ObjectId;
-  ruleId: mongoose.Types.ObjectId;
-  packageId: mongoose.Types.ObjectId;
-};
+async function seedCustomers(adminId: Types.ObjectId, passwordHash: string) {
+  const today = todayInZone();
+  const users = new Map<string, Types.ObjectId>();
+  const packages = new Map<string, { id: Types.ObjectId; total: number; used: number }>();
 
-async function seedCompletedSession({ customerId, trainerId, ruleId, packageId, key, daysAgo, exercises, trainerNotes, suggestedNextWorkout, feedback }: SeedHistory) {
-  const startTime = zonedToUtc(addDays(todayInZone(), -daysAgo), "10:00");
-  const endTime = addMinutes(startTime, 60);
-  const quote = calculateQuote(DEFAULT_PRICING, startTime);
-  const customer = { _id: customerId };
-  const trainer = { _id: trainerId };
-  const rule = { _id: ruleId };
+  for (const { profile, package: credit, ...customer } of CUSTOMERS) {
+    const user = await upsertUser({ ...customer, role: "customer" }, passwordHash);
+    users.set(customer.email, user._id);
 
-  const booking = await Booking.findOneAndUpdate(
-    { customerId: customer._id, idempotencyKey: key },
-    {
-      $set: {
-        trainerId: trainer._id,
-        startTime,
-        endTime,
-        bookingType: "scheduled",
-        status: "completed",
-        serviceZone: "Indiranagar",
-        paymentStatus: "paid",
-        sessionPrice: quote.sessionPrice,
-        commissionAmount: quote.commissionAmount,
-        totalAmount: quote.totalAmount,
-      },
-    },
-    { upsert: true, new: true }
-  ).orFail();
+    if (profile) {
+      const { assessments, ...fields } = profile;
+      const latest = assessments[assessments.length - 1];
+      await FitnessProfile.create({ customerId: user._id, ...fields, weight: latest.weight });
+      for (const { daysAgo, weight } of assessments) {
+        const assessment = await FitnessAssessment.create({ customerId: user._id, age: fields.age, weight, fitnessGoals: fields.fitnessGoals, experienceLevel: fields.experienceLevel });
+        await backdate(FitnessAssessment, assessment._id, zonedToUtc(addDays(today, -daysAgo), "09:00"), false);
+      }
+    }
 
-  await Payment.updateOne(
-    { bookingId: booking._id, status: "paid" },
-    {
-      $set: {
-        customerId: customer._id,
+    if (credit) {
+      const created = await Package.create({
+        customerId: user._id,
+        totalSessions: credit.totalSessions,
+        usedSessions: 0,
+        remainingSessions: credit.totalSessions,
+        status: "active",
+        source: credit.source,
+        grantedBy: credit.source === "admin" ? adminId : null,
+      });
+      await backdate(Package, created._id, zonedToUtc(addDays(today, -credit.daysAgo), "09:00"));
+      packages.set(customer.email, { id: created._id, total: credit.totalSessions, used: 0 });
+    }
+  }
+
+  return { users, packages };
+}
+
+async function seedBookings(
+  customers: Map<string, Types.ObjectId>,
+  trainers: Map<string, Types.ObjectId>,
+  packages: Map<string, { id: Types.ObjectId; total: number; used: number }>,
+  ruleId: Types.ObjectId
+) {
+  const today = todayInZone();
+  const now = new Date();
+  const scheduled = BOOKINGS.map((booking) => ({ booking, start: zonedToUtc(addDays(today, booking.day), booking.time) })).sort(
+    (a, b) => a.start.getTime() - b.start.getTime()
+  );
+
+  for (const { booking: seed, start } of scheduled) {
+    const customerId = customers.get(seed.customer)!;
+    const trainerId = trainers.get(seed.trainer)!;
+    const quote = calculateQuote(DEFAULT_PRICING, start);
+    const paid = PAID.includes(seed.outcome);
+    const createdAt = bookedAt(seed, start, now);
+
+    const booking = await Booking.create({
+      customerId,
+      trainerId,
+      startTime: start,
+      endTime: addMinutes(start, SESSION_MINUTES),
+      bookingType: seed.mode,
+      serviceZone: seed.zone,
+      idempotencyKey: seed.key,
+      ...BOOKING_STATE[seed.outcome],
+      ...(paid && { sessionPrice: quote.sessionPrice, commissionAmount: quote.commissionAmount, totalAmount: quote.totalAmount }),
+    });
+    await backdate(Booking, booking._id, createdAt);
+
+    const attempt = paid ? "paid" : FAILED.includes(seed.outcome) ? "failed" : seed.outcome === "expired_checkout" ? "expired" : null;
+    if (attempt) {
+      const checkoutAt = addMinutes(createdAt, seed.mode === "instant" ? 3 : 10);
+      const payment = await Payment.create({
+        bookingId: booking._id,
+        customerId,
+        status: attempt,
         ...quote,
-        pricingRuleId: rule._id,
-        expiresAt: startTime,
-        providerReference: `sim_${key}`,
-        paidAt: addMinutes(startTime, -120),
-      },
-    },
-    { upsert: true }
-  );
+        pricingRuleId: ruleId,
+        expiresAt: addMinutes(checkoutAt, QUOTE_TTL_MINUTES),
+        providerReference: attempt === "paid" ? `sim_${seed.key}` : null,
+        failureReason: attempt === "failed" ? DECLINED : null,
+        paidAt: attempt === "paid" ? addMinutes(checkoutAt, 2) : null,
+      });
+      await backdate(Payment, payment._id, checkoutAt);
+    }
 
-  const record = await SessionRecord.findOneAndUpdate(
-    { bookingId: booking._id },
-    {
-      $set: {
-        customerId: customer._id,
-        trainerId: trainer._id,
+    if (seed.outcome === "completed" && seed.workout) {
+      const { feedback, ...workout } = seed.workout;
+      const startedAt = addMinutes(start, 2);
+      const endsAt = addMinutes(startedAt, SESSION_MINUTES);
+      const record = await SessionRecord.create({
+        bookingId: booking._id,
+        customerId,
+        trainerId,
         status: "completed",
-        startedAt: startTime,
-        endsAt: endTime,
-        completedAt: endTime,
-        durationMinutes: 60,
-        exercises,
-        trainerNotes,
-        suggestedNextWorkout,
+        startedAt,
+        endsAt,
+        completedAt: endsAt,
+        durationMinutes: SESSION_MINUTES,
+        ...workout,
         ...(feedback && { customerFeedback: feedback }),
-      },
-    },
-    { upsert: true, new: true }
-  ).orFail();
+      });
+      await backdate(SessionRecord, record._id, startedAt);
 
-  await PackageDeduction.updateOne(
-    { bookingId: booking._id },
-    { $setOnInsert: { sessionRecordId: record._id, customerId: customer._id, packageId, outcome: "deducted" } },
-    { upsert: true }
-  );
+      const credit = packages.get(seed.customer);
+      const deducted = credit && credit.used < credit.total;
+      if (deducted) {
+        credit.used += 1;
+      }
+      const deduction = await PackageDeduction.create({
+        bookingId: booking._id,
+        sessionRecordId: record._id,
+        customerId,
+        packageId: deducted ? credit.id : null,
+        outcome: deducted ? "deducted" : "no_package",
+      });
+      await backdate(PackageDeduction, deduction._id, endsAt, false);
+    }
+  }
+
+  for (const credit of packages.values()) {
+    const remaining = credit.total - credit.used;
+    await Package.updateOne(
+      { _id: credit.id },
+      { $set: { usedSessions: credit.used, remainingSessions: remaining, status: remaining === 0 ? "exhausted" : "active" } }
+    );
+  }
 }
 
 async function seed() {
@@ -235,17 +328,26 @@ async function seed() {
     throw new Error("MONGODB_URI is not defined");
   }
 
+  validateScenarios();
   await mongoose.connect(uri);
   console.log(`Seeding demo data into database "${mongoose.connection.name}"`);
-  await Promise.all([User.init(), TrainerAvailability.init(), PricingRule.init(), Booking.init(), PackageDeduction.init(), FitnessProfile.init()]);
+
+  if (RESET) {
+    await wipeEverything();
+  } else {
+    await removeDemoData();
+    await renameLegacyZones();
+  }
+
+  await Promise.all(ALL_MODELS.map((model) => model.init()));
 
   const passwordHash = await bcrypt.hash(process.env.DEMO_PASSWORD || DEFAULT_DEMO_PASSWORD, 10);
+  const admin = await upsertUser({ ...DEMO_ACCOUNTS.admin, role: "admin" }, passwordHash);
 
-  await upsertUser({ ...DEMO_ACCOUNTS.customer, role: "customer" }, passwordHash);
-  await upsertUser({ ...DEMO_ACCOUNTS.admin, role: "admin" }, passwordHash);
-
+  const trainers = new Map<string, Types.ObjectId>();
   for (const { zones, ...trainer } of TRAINERS) {
     const user = await upsertUser({ ...trainer, role: "trainer" }, passwordHash);
+    trainers.set(trainer.email, user._id);
     await TrainerAvailability.deleteMany({ trainerId: user._id });
     await TrainerAvailability.insertMany(buildAvailability(user._id, zones));
   }
@@ -253,16 +355,22 @@ async function seed() {
   await PricingRule.updateMany({ name: { $ne: "Standard" } }, { $set: { isActive: false } });
   await PricingRule.syncIndexes();
   await PricingRule.updateOne({ name: "Standard" }, { $set: { ...DEFAULT_PRICING, isActive: true } }, { upsert: true });
-  await seedCustomerHistory();
+  const rule = await PricingRule.findOne({ name: "Standard" }).orFail();
 
+  const { users: customers, packages } = await seedCustomers(admin._id, passwordHash);
+  await seedBookings(customers, trainers, packages, rule._id);
+
+  const outcomes = Object.entries(Object.groupBy(BOOKINGS, (booking) => booking.outcome)).map(([outcome, list]) => `${outcome} ${list?.length}`);
   console.log("Demo accounts ready:");
-  console.log(`  customer  ${DEMO_ACCOUNTS.customer.email}`);
   console.log(`  admin     ${DEMO_ACCOUNTS.admin.email}`);
+  for (const customer of CUSTOMERS) {
+    console.log(`  customer  ${customer.email}`);
+  }
   for (const trainer of TRAINERS) {
     console.log(`  trainer   ${trainer.email.padEnd(26)} ${trainer.zones.join(" / ")}`);
   }
   console.log(`Availability: ${SEED_DAYS} days, 06:00–13:00 and 14:00–21:00 IST per trainer`);
-  console.log("Customer history: profile + 2 assessments, 3 completed sessions with Priya Nair, 10-session package (3 used)");
+  console.log(`Bookings: ${BOOKINGS.length} (${outcomes.join(", ")})`);
   const { normalPrice, peakPrice, commissionPercent } = DEFAULT_PRICING;
   console.log(
     `Pricing: normal ${formatInr(quoteForPrice(normalPrice, commissionPercent, false).totalAmount)}, ` +

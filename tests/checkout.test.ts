@@ -37,7 +37,7 @@ async function createBooking(customer: Account, startTime = NORMAL, overrides: R
     endTime: addMinutes(startTime, 60),
     bookingType: "scheduled",
     status: "confirmed",
-    serviceZone: "Indiranagar",
+    serviceZone: "Mumbai",
     ...overrides,
   });
   return booking._id.toString();

@@ -10,7 +10,7 @@ import { Booking } from "@/models/Booking";
 import { TrainerAvailability } from "@/models/TrainerAvailability";
 import { addWindow, createAccount, makeRequest, routeContext } from "./helpers";
 
-const ZONE: ServiceZone = "Indiranagar";
+const ZONE: ServiceZone = "Mumbai";
 const day = addDays(todayInZone(), 2);
 const at = (time: string) => zonedToUtc(day, time);
 
@@ -90,12 +90,12 @@ describe("creating bookings", () => {
   });
 
   test("a trainer outside the requested zone is not assigned", async () => {
-    await trainerAvailable("Koramangala");
-    const inZone = await trainerAvailable("Indiranagar");
+    await trainerAvailable("Thane");
+    const inZone = await trainerAvailable("Mumbai");
     const customer = await createAccount("customer");
 
     const assigned = await (await book(customer, { startTime: at("10:00").toISOString() })).json();
-    const elsewhere = await book(customer, { startTime: at("11:00").toISOString(), serviceZone: "Whitefield" });
+    const elsewhere = await book(customer, { startTime: at("11:00").toISOString(), serviceZone: "Delhi" });
 
     expect(assigned.booking.trainer.id).toBe(inZone.id);
     expect(elsewhere.status).toBe(409);

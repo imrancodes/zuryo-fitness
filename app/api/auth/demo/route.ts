@@ -1,16 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { jsonError, readJson, validationError } from "@/lib/api";
-import { DEMO_ACCOUNTS, isDemoEnabled } from "@/lib/demo";
+import { DEMO_ACCOUNTS } from "@/lib/demo";
 import { ROLE_HOME } from "@/lib/roles";
 import { setSessionCookie } from "@/lib/session";
 import { getActiveUserByEmail } from "@/services/auth.service";
 import { demoLoginSchema } from "@/validators/auth";
 
 export async function POST(request: NextRequest) {
-  if (!isDemoEnabled()) {
-    return jsonError("Not found", 404);
-  }
-
   const result = demoLoginSchema.safeParse(await readJson(request));
 
   if (!result.success) {

@@ -1,21 +1,15 @@
 import { ArrowLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { Brand } from "@/components/brand";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DemoRoleCards } from "@/features/auth/demo-role-cards";
-import { isDemoEnabled } from "@/lib/demo";
 
 export const metadata: Metadata = { title: "Demo access" };
 
 export default function DemoPage() {
-  if (!isDemoEnabled()) {
-    notFound();
-  }
-
   return (
     <div className="min-h-screen">
       <header className="border-b bg-card">

@@ -17,7 +17,6 @@ Copy `.env.example` to `.env.local` and fill in the values.
 | `MONGODB_URI` | Yes | MongoDB connection string, including the database name |
 | `SESSION_SECRET` | Yes | Random string of at least 32 characters used to sign session cookies |
 | `DEMO_PASSWORD` | No | Password for seeded demo accounts. Defaults to `ZuryoDemo123!` in development |
-| `ENABLE_DEMO_LOGIN` | No | Set to `true` to allow one-click demo login outside `next dev`. Must be set at build time for the demo UI to appear |
 | `GEMINI_API_KEY` | No | Google AI Studio API key for AI workout plans. Server-only, never exposed to the browser. Without it the app uses rule-based suggestions |
 | `GEMINI_MODEL` | No | Gemini model ID. Defaults to `gemini-3.5-flash-lite` |
 
@@ -71,7 +70,7 @@ For the demo customer the seed also creates a fitness profile with **two dated a
 - `proxy.ts` does a fast signature check to redirect early. Every page and API then validates the session on the server and reloads the user from the database, so a changed role or deactivated account takes effect immediately.
 - Public registration only allows `customer` or `trainer`. Admins are created by the seed script.
 - Login errors are generic, and redirects after login are limited to the user's own area.
-- Demo login only works when `NODE_ENV=development` or `ENABLE_DEMO_LOGIN=true`. It signs in as a seeded account and goes through the same server-side role checks.
+- Demo login is always available, including in production. It signs in as a seeded account and goes through the same server-side role checks. For a production database, seed the demo accounts by running `bun run seed` locally with `MONGODB_URI` set to that database.
 
 ## Booking
 
@@ -470,7 +469,7 @@ All responses are JSON. Errors use the shape `{ "error": string, "fieldErrors"?:
 | `POST` | `/api/auth/register` | Public | `customer` or `trainer` only |
 | `POST` | `/api/auth/login` | Public | |
 | `POST` | `/api/auth/logout` | Public | |
-| `POST` | `/api/auth/demo` | Demo mode only | |
+| `POST` | `/api/auth/demo` | Public | `{role}`; signs in as the seeded demo account |
 | `GET` | `/api/auth/me` | Signed in | |
 | `GET` | `/api/availability?mode&serviceZone&date` | Customer | Open slots by trainer, plus all open times |
 | `GET` | `/api/trainers?serviceZone&startTime` | Customer | Trainers eligible for one start time |
@@ -537,6 +536,7 @@ tests/        Bun tests
 ## Limitations
 
 - There is no rate limiting or account lockout on login.
+- Demo login is open in every environment, so anyone can sign in as the demo customer, trainer or admin without a password. Don't put real user data in a deployment that has demo login.
 - Sessions are stateless JWTs, so logging out clears the cookie but cannot revoke a token copied elsewhere before it expires. Deactivating a user does block access immediately.
 - There is no email verification or password reset.
 - Payments are simulated. There is no real gateway, refunds or invoices, and an unpaid booking still holds the trainer's slot.

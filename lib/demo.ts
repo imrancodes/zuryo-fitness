@@ -5,7 +5,3 @@ export const DEMO_ACCOUNTS: Record<Role, { name: string; email: string }> = {
   trainer: { name: "Priya Nair", email: "trainer@zuryo.dev" },
   admin: { name: "Zuryo Admin", email: "admin@zuryo.dev" },
 };
-
-export function isDemoEnabled() {
-  return process.env.NODE_ENV === "development" || process.env.ENABLE_DEMO_LOGIN === "true";
-}

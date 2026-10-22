@@ -3,7 +3,6 @@ import Link from "next/link";
 import { AuthHeading } from "@/features/auth/auth-heading";
 import { DemoAccessNotice } from "@/features/auth/demo-access-notice";
 import { LoginForm } from "@/features/auth/login-form";
-import { isDemoEnabled } from "@/lib/demo";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -18,7 +17,7 @@ export default function LoginPage() {
           Create an account
         </Link>
       </p>
-      {isDemoEnabled() && <DemoAccessNotice />}
+      <DemoAccessNotice />
     </div>
   );
 }

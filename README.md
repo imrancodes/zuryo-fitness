@@ -459,6 +459,25 @@ Customers without a profile get `needs_profile` and a prompt to complete the ass
 - Letting trainers review AI plans before customers see them.
 - A paid tier with Google's data-use terms for production.
 
+## Admin bookings
+
+`/admin/bookings` lists every booking from MongoDB, newest session first, 20 per page:
+- **Columns:** booking ID, mode, customer and trainer (name and email), session date, time and zone in IST, booking status, session status, payment status, and the price, commission and total.
+- **Amounts** are only stored on a booking once it's paid, so unpaid bookings show "—". Nothing is recalculated for display.
+- **Filters:** booking status, payment status and session date (an IST day). They're plain query parameters, so a filtered view can be bookmarked or shared.
+- **Search:** a full 24-character booking ID matches that booking. Any other text matches customer or trainer names (case-insensitive, partial).
+
+Before listing, expired in-progress sessions are reconciled (the same lazy reconciliation every other read uses), so the stored "completed" status is accurate when filtering. The derived "Missed" session status isn't stored; those bookings appear under booking status "Confirmed", and the Session column shows "Missed".
+
+`/admin/bookings/[id]` shows:
+- the booking and its assignment (customer and trainer contacts, and when it was booked and assigned)
+- the session lifecycle: status, start window, and the started, ends and completed times
+- the paid price snapshot, and every checkout attempt (open, paid, failed or expired)
+
+Workout notes, customer feedback and fitness profile data aren't shown.
+
+The pages are **read-only**. Admins can't reassign, cancel, refund or change payments, because no business rules exist for those actions yet. Both pages and both APIs check the admin role on the server.
+
 ## API
 
 All responses are JSON. Errors use the shape `{ "error": string, "fieldErrors"?: { [field]: string[] } }`, and internal errors return a generic `500`.
@@ -503,6 +522,8 @@ All responses are JSON. Errors use the shape `{ "error": string, "fieldErrors"?:
 | `GET` | `/api/admin/packages` | Admin | Recent packages |
 | `POST` | `/api/admin/packages` | Admin | `{email, sessions 1–50}`; `201`, `404` if the email doesn't belong to a customer |
 | `GET` | `/api/admin/users` | Admin | |
+| `GET` | `/api/admin/bookings?status&payment&date&q&page` | Admin | `{bookings, page, pageSize, total, totalPages}`; `status` is a booking status, `payment` a payment status, `date` an IST `YYYY-MM-DD`, `q` a booking ID or customer or trainer name; `400` on invalid filters |
+| `GET` | `/api/admin/bookings/[id]` | Admin | `{booking, payments, session}`: contacts, amounts, every checkout attempt and session timestamps (no workout notes); `404` for an invalid or unknown ID |
 
 The server always takes the customer from the session, sets the session length, assigns the trainer and sets the status. Any `customerId`, `status` or duration sent by the client is ignored, and so is any price, commission or total.
 
@@ -544,6 +565,7 @@ tests/        Bun tests
 - The five-minute warning is in-app only; there are no push or SMS notifications yet.
 - Packages aren't linked to checkout yet: customers still pay per session, and credits are granted by an admin or the seed. Sessions completed before Phase 6 weren't backfilled into the ledger.
 - Cancelling and rescheduling aren't supported; the bookings page says so.
+- Admin bookings are read-only. Whether a trainer was auto-assigned or chosen by the customer isn't stored, so the details page can't show it. Name search uses a regex rather than a text index, and the payment-status filter has no dedicated index; both are fine at MVP scale.
 - Progress is limited to completed sessions and self-reported weight. Suggestions (AI and rules-based) are general guidance, not medical advice.
 - AI plans use the Gemini free tier by default: low quotas mean frequent rule-based fallbacks under load, and free-tier prompts may be used by Google to improve its products.
 - There is a single editable pricing rule; there is no pricing history beyond the snapshot stored on each payment.

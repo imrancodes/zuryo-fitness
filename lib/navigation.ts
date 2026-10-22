@@ -40,7 +40,7 @@ export const NAV_ITEMS: Record<Role, NavItem[]> = {
   admin: [
     { label: "Overview", href: "/admin", icon: LayoutDashboard },
     { label: "Users", href: "/admin/users", icon: Users, soon: true },
-    { label: "Bookings", href: "/admin/bookings", icon: ReceiptText, soon: true },
+    { label: "Bookings", href: "/admin/bookings", icon: ReceiptText },
     { label: "Pricing", href: "/admin/pricing", icon: Settings2 },
     { label: "Packages", href: "/admin/packages", icon: Package },
   ],

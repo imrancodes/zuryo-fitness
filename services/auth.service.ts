@@ -88,6 +88,23 @@ export async function namesById(ids: (Types.ObjectId | string | null | undefined
   return (id: Types.ObjectId | string) => ({ id: id.toString(), name: names.get(id.toString()) ?? "Unknown" });
 }
 
+export async function contactsById(ids: (Types.ObjectId | string | null | undefined)[]) {
+  await connectToDatabase();
+  const users = await User.find({ _id: { $in: ids.filter(Boolean) } }, "name email").lean();
+  const byId = new Map(users.map((user) => [user._id.toString(), user]));
+  return (id: Types.ObjectId | string) => {
+    const user = byId.get(id.toString());
+    return { id: id.toString(), name: user?.name ?? "Unknown", email: user?.email ?? null };
+  };
+}
+
+export async function findUserIdsByName(search: string, limit = 50) {
+  await connectToDatabase();
+  const pattern = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+  const users = await User.find({ name: pattern }, "_id").limit(limit).lean();
+  return users.map((user) => user._id);
+}
+
 export async function listUsers() {
   await connectToDatabase();
   const users = await User.find().sort({ createdAt: -1 }).limit(100);

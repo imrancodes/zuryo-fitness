@@ -59,6 +59,14 @@ export async function getBookingPayment(bookingId: string, customerId: string) {
   return payment ? toPaymentView(payment) : null;
 }
 
+export async function listBookingPayments(bookingId: string) {
+  await connectToDatabase();
+  const payments = isValidObjectId(bookingId)
+    ? await Payment.find({ bookingId }).sort({ createdAt: -1 }).limit(50).lean<PaymentRecord[]>()
+    : [];
+  return payments.map(toPaymentView);
+}
+
 export async function startCheckout(bookingId: string, customerId: string, now = new Date()) {
   const { quote, ruleId } = await quoteBooking(bookingId, customerId, now);
   await Payment.init();

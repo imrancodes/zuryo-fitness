@@ -1,5 +1,5 @@
 import "server-only";
-import { isValidObjectId, type ClientSession } from "mongoose";
+import { isValidObjectId, type ClientSession, type QueryFilter } from "mongoose";
 import {
   ACTIVE_BOOKING_STATUSES,
   SESSION_MINUTES,
@@ -11,16 +11,22 @@ import {
 import { isDuplicateKeyError, ServiceError } from "@/lib/errors";
 import { connectToDatabase } from "@/lib/mongodb";
 import type { SessionStatus } from "@/lib/session-timer";
-import { addMinutes } from "@/lib/time";
+import { addMinutes, dayBoundsUtc } from "@/lib/time";
 import type { ServiceZone } from "@/lib/zones";
-import { Booking, type BookingRecord } from "@/models/Booking";
-import { namesById } from "@/services/auth.service";
+import { Booking, type BookingDocument, type BookingRecord } from "@/models/Booking";
+import { contactsById, findUserIdsByName, namesById } from "@/services/auth.service";
 import { openSlotsByTrainer } from "@/services/availability.service";
-import { sessionStatusesFor } from "@/services/session.service";
+import { listBookingPayments } from "@/services/payment.service";
+import { getSessionForViewer, reconcileExpiredSessions, sessionStatusesFor } from "@/services/session.service";
 import { withTrainerLock } from "@/services/schedule-lock";
-import type { BookingView } from "@/types/booking";
+import type { AdminBookingDetail, AdminBookingPage, AdminBookingView, BookingView } from "@/types/booking";
 import type { PublicUser } from "@/types/user";
-import type { BookingFilter, CreateBookingInput } from "@/validators/booking";
+import {
+  ADMIN_BOOKINGS_PAGE_SIZE,
+  type AdminBookingListQuery,
+  type BookingFilter,
+  type CreateBookingInput,
+} from "@/validators/booking";
 
 const SLOT_TAKEN = "This time was just taken. Choose another time.";
 const PREFERRED_UNAVAILABLE = "Your preferred trainer isn't available at this time in this zone. Choose another time or trainer.";
@@ -164,6 +170,101 @@ export async function listCustomerBookings(customerId: string, filter: BookingFi
     .lean<BookingRecord[]>();
   const views = await toBookingViews(bookings);
   return views.filter((booking) => BOOKING_FILTER_STATUSES[filter].includes(booking.sessionStatus));
+}
+
+async function toAdminBookingViews(bookings: BookingRecord[]): Promise<AdminBookingView[]> {
+  const [views, contact] = await Promise.all([
+    toBookingViews(bookings),
+    contactsById(bookings.flatMap((booking) => [booking.customerId, booking.trainerId])),
+  ]);
+
+  return views.map((view, index) => {
+    const booking = bookings[index];
+    const { sessionPrice, commissionAmount, totalAmount } = booking;
+    const priced = sessionPrice != null && commissionAmount != null && totalAmount != null;
+    return {
+      ...view,
+      customer: contact(booking.customerId),
+      trainer: booking.trainerId ? contact(booking.trainerId) : null,
+      amounts: priced ? { sessionPrice, commissionAmount, totalAmount } : null,
+    };
+  });
+}
+
+async function adminBookingFilter(query: AdminBookingListQuery) {
+  const filter: QueryFilter<BookingDocument> = {};
+
+  if (query.status) {
+    filter.status = query.status;
+  }
+  if (query.payment) {
+    filter.paymentStatus = query.payment;
+  }
+  if (query.date) {
+    const { start, end } = dayBoundsUtc(query.date);
+    filter.startTime = { $gte: start, $lt: end };
+  }
+  if (query.q) {
+    if (/^[a-f\d]{24}$/i.test(query.q)) {
+      filter._id = query.q;
+    } else {
+      const userIds = await findUserIdsByName(query.q);
+      if (userIds.length === 0) {
+        return null;
+      }
+      filter.$or = [{ customerId: { $in: userIds } }, { trainerId: { $in: userIds } }];
+    }
+  }
+
+  return filter;
+}
+
+export async function listAdminBookings(query: AdminBookingListQuery, now = new Date()): Promise<AdminBookingPage> {
+  await connectToDatabase();
+  await reconcileExpiredSessions(now);
+
+  const pageSize = ADMIN_BOOKINGS_PAGE_SIZE;
+  const filter = await adminBookingFilter(query);
+
+  if (!filter) {
+    return { bookings: [], page: query.page, pageSize, total: 0, totalPages: 0 };
+  }
+
+  const [bookings, total] = await Promise.all([
+    Booking.find(filter)
+      .sort({ startTime: -1, _id: -1 })
+      .skip((query.page - 1) * pageSize)
+      .limit(pageSize)
+      .lean<BookingRecord[]>(),
+    Booking.countDocuments(filter),
+  ]);
+
+  return {
+    bookings: await toAdminBookingViews(bookings),
+    page: query.page,
+    pageSize,
+    total,
+    totalPages: Math.ceil(total / pageSize),
+  };
+}
+
+export async function getAdminBookingDetail(id: string, admin: PublicUser, now = new Date()): Promise<AdminBookingDetail> {
+  await connectToDatabase();
+  const booking = isValidObjectId(id) ? await Booking.findById(id).lean<BookingRecord>() : null;
+
+  if (!booking) {
+    throw new ServiceError(404, "Booking not found");
+  }
+
+  const [session, payments] = await Promise.all([getSessionForViewer(id, admin, now), listBookingPayments(id)]);
+  const [view] = await toAdminBookingViews([booking]);
+  const { status, startWindow, startedAt, endsAt, completedAt, durationMinutes } = session;
+
+  return {
+    booking: view,
+    payments,
+    session: { status, startWindow, startedAt, endsAt, completedAt, durationMinutes },
+  };
 }
 
 export async function listUpcomingBookings(filter: { customerId: string } | { trainerId: string }, now = new Date()) {

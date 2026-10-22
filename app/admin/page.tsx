@@ -1,4 +1,4 @@
-import { BarChart3, ReceiptText, Settings2, TrendingUp, Users } from "lucide-react";
+import { BarChart3, Settings2, TrendingUp, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ComingSoonGrid, type ComingSoonItem } from "@/components/coming-soon-grid";
@@ -10,7 +10,6 @@ export const metadata: Metadata = { title: "Admin" };
 
 const UPCOMING: ComingSoonItem[] = [
   { icon: Users, title: "User management", description: "Review customers and trainers, and activate or suspend accounts." },
-  { icon: ReceiptText, title: "Bookings", description: "Monitor every booking and its payment status." },
   { icon: TrendingUp, title: "Revenue reports", description: "Track session revenue and society commission over time." },
 ];
 

@@ -255,10 +255,20 @@ export async function getSessionForViewer(bookingId: string, viewer: PublicUser,
   return session;
 }
 
-export async function reconcileExpiredForCustomer(customerId: string, now = new Date()) {
+async function reconcileExpired(filter: { customerId?: string }, now: Date, limit = 200) {
   await connectToDatabase();
-  const expired = await SessionRecord.find({ customerId, status: "in_progress", endsAt: { $lte: now } }).lean<SessionRecordRecord[]>();
+  const expired = await SessionRecord.find({ ...filter, status: "in_progress", endsAt: { $lte: now } })
+    .limit(limit)
+    .lean<SessionRecordRecord[]>();
   await reconcileAll(expired, now);
+}
+
+export function reconcileExpiredForCustomer(customerId: string, now = new Date()) {
+  return reconcileExpired({ customerId }, now);
+}
+
+export function reconcileExpiredSessions(now = new Date()) {
+  return reconcileExpired({}, now);
 }
 
 export async function listCompletedSessions(filter: { customerId: string; trainerId?: string }, now = new Date(), limit = 50) {
